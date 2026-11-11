@@ -1,6 +1,6 @@
 /* Service worker: aplikácia funguje aj bez internetu.
    Pri každej novej verzii zvýš číslo v CACHE. */
-const CACHE = 'dennik-v1';
+const CACHE = 'dennik-v2';
 const ASSETS = [
   './', './index.html', './style.css', './app.js', './analysis.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
@@ -25,7 +25,9 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    const network = fetch(req, { cache: 'no-cache' }).then(res => {
+    // navigačnú požiadavku nemožno kopírovať s inými nastaveniami → posielame ju ako je
+    const fresh = req.mode === 'navigate' ? req : new Request(req, { cache: 'no-cache' });
+    const network = fetch(fresh).then(res => {
       if (res && res.ok) cache.put(req, res.clone());
       return res;
     });

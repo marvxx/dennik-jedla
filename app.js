@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.0';
+  const APP_VERSION = '1.1';
   const DAY = 864e5;
 
   // ---------- Číselníky ----------
@@ -15,11 +15,13 @@
   const STOOL = [['tvrda', 'tvrdá'], ['normalna', 'normálna'], ['makka', 'mäkká'], ['hnacka', 'hnačka']];
   const PORTION = [['mala', 'malá'], ['normalna', 'normálna'], ['velka', 'veľká']];
   const TAGS = [
-    ['kava', '☕', 'káva'], ['alkohol', '🍷', 'alkohol'], ['mliecne', '🥛', 'mliečne'],
-    ['pikantne', '🌶️', 'pikantné'], ['mastne', '🍟', 'mastné / vyprážané'], ['sycene', '🫧', 'sýtené nápoje'],
-    ['sladidla', '🍬', 'sladidlá / light'], ['lepok', '🌾', 'pečivo / cestoviny'], ['strukoviny', '🫘', 'strukoviny'],
+    ['mliecne', '🥛', 'mliečne / laktóza'], ['lepok', '🌾', 'lepok / pečivo'], ['fruktoza', '🍎', 'fruktóza / ovocie, med'],
+    ['cesnak', '🧅', 'cibuľa / cesnak'], ['strukoviny', '🫘', 'strukoviny'], ['histamin', '🧀', 'histamín / zrejúce, údené'],
+    ['kava', '☕', 'káva'], ['alkohol', '🍷', 'alkohol'], ['sycene', '🫧', 'sýtené nápoje'],
+    ['sladidla', '🍬', 'sladidlá / light'], ['pikantne', '🌶️', 'pikantné'], ['mastne', '🍟', 'mastné / vyprážané'],
     ['surova', '🥗', 'surová zelenina'],
   ];
+  const PLACES = [['doma', '🏠 doma'], ['restauracia', '🍴 reštaurácia / jedáleň'], ['niekto', '👥 u niekoho'], ['kupovane', '🛒 kupované hotové']];
   const KINDS = ['kŕč', 'nadúvanie', 'plynatosť', 'nevoľnosť', 'pálenie záhy', 'nutkanie na stolicu'];
   const LOCATION = [['horna', 'hore'], ['pupok', 'okolo pupka'], ['dolna', 'dole'], ['cele', 'celé brucho']];
   const DURATIONS = ['5 min', '15 min', '30 min', '1 h', '2 h', 'viac hodín'];
@@ -39,8 +41,13 @@
     'stress:high': '😬 stres 4–5 pri jedle', 'mood:low': '🙁 zlá nálada pri jedle',
     'sleep:zle': '😴 zlý spánok', 'period': '🩸 menštruácia',
     'activity:ziadny': '🛋️ deň bez pohybu', 'water:malo': '💧 málo pitia',
+    'risk': '⚠️ obsahuje moje rizikové suroviny',
+    'risk&enzyme': '💊 s enzýmom (laktáza…)', 'risk&away': '🍴 mimo domu', 'risk&stress': '😬 pri strese 4–5',
+    'risk&period': '🩸 počas menštruácie', 'risk&sleep': '😴 po zlom spánku', 'risk&rushed': '⏱️ v zhone',
   };
-  TAGS.forEach(([v, e, t]) => { CTX_LABELS['tag:' + v] = e + ' ' + t; });
+  TAGS.forEach(([v, e, t]) => { CTX_LABELS['tag:' + v] = e + ' ' + t; CTX_LABELS['stack:' + v] = e + ' ' + t; });
+  PLACES.forEach(([v, l]) => { CTX_LABELS['place:' + v] = l; });
+  const tagLabel = t => { const x = TAGS.find(y => y[0] === t); return x ? x[1] + ' ' + x[2] : t; };
 
   // ---------- Pomocné ----------
   const $ = (s, el = document) => el.querySelector(s);
@@ -138,9 +145,19 @@
     return {
       type: type || null, ts: Date.now(), tsTouched: false, desc: '', severity: null, duration: '',
       stool: null, stress: null, mood: null, note: '', portion: null, rushed: false,
-      tags: [], kinds: [], location: null,
+      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false,
     };
   }
+
+  // Skupiny jedla v rozpracovanom zázname: ručne + automaticky rozpoznané – ručne vypnuté
+  function autoTags() { return Analysis.detectTags(draft.desc); }
+  function effectiveTags() {
+    const s = new Set(draft.tags.concat(autoTags()));
+    draft.noTags.forEach(t => s.delete(t));
+    return [...s];
+  }
+  const riskTags = () => meta.intol || [];
+  const favorites = () => meta.favorites || [];
 
   async function setMeta(key, value) {
     meta[key] = value;
@@ -157,7 +174,7 @@
   }
 
   // ---------- Prepínanie obrazoviek ----------
-  const TITLES = { add: 'Zapísať', list: 'Prehľad', insights: 'Súvislosti', settings: 'Záloha a export' };
+  const TITLES = { add: 'Zapísať', list: 'Prehľad', insights: 'Súvislosti', settings: 'Nastavenia' };
 
   function switchView(v) {
     currentView = v;
@@ -233,9 +250,17 @@
     ).join('');
   }
 
+  function noSymBtn(d) {
+    if (entries.some(e => e.type === 'symptom' && dateStr(e.ts) === d)) return '';
+    const on = days[d] && days[d].noSymptoms;
+    const lbl = d === todayStr() ? 'Dnes bez ťažkostí' : 'Deň bez ťažkostí';
+    return `<button type="button" class="btn block nosym${on ? ' on' : ''}" data-act="no-sym" data-date="${d}">👍 ${lbl}${on ? ' ✓' : ''}</button>`;
+  }
+
   function dayText(v) {
     if (!v) return '';
     const parts = [];
+    if (v.noSymptoms) parts.push('👍 bez ťažkostí');
     if (v.sleep != null) parts.push('spánok ' + lab(SLEEP, v.sleep));
     if (v.period != null) parts.push(v.period ? 'menštruácia' : 'bez menštruácie');
     if (v.activity != null) parts.push('pohyb ' + lab(ACTIVITY, v.activity));
@@ -250,14 +275,17 @@
     if (editingId) { el.innerHTML = ''; return; }
     const d = todayStr();
     const v = days[d] || {};
+    const ns = noSymBtn(d);
+    const nsHtml = ns ? `<div style="margin-top:10px">${ns}<p class="tiny" style="margin:4px 0 0;text-align:center">ťukni večer, ak dnes nebolo nič – spresní to vyhodnotenie</p></div>` : '';
     if (dayFilled(v) === DAY_FIELDS.length && !todayExpanded) {
-      el.innerHTML = `<div class="card today-summary"><span class="txt">✅ Dnes: ${esc(dayText(v))}</span>
-        <button type="button" class="btn ghost small" data-act="today-edit">Upraviť</button></div>`;
+      el.innerHTML = `<div class="card"><div class="today-summary"><span class="txt">✅ Dnes: ${esc(dayText(v))}</span>
+        <button type="button" class="btn ghost small" data-act="today-edit">Upraviť</button></div>${nsHtml}</div>`;
       return;
     }
     el.innerHTML = `<div class="card today"><h3>Dnešný deň <span class="tiny">· raz za deň, nepovinné</span></h3>
       ${dayRows(d, v)}
       ${todayExpanded ? '<div class="dialog-actions"><button type="button" class="btn small" data-act="today-done">Hotovo</button></div>' : ''}
+      ${nsHtml}
     </div>`;
   }
 
@@ -286,10 +314,75 @@
   }
 
   function descField(label, placeholder, opt) {
-    const q = quickFor(draft.type);
-    const quick = q.length ? `<div class="chips quick" style="margin-top:10px">${q.map(t =>
-      `<button type="button" class="chip" data-q="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : '';
-    return field(label, `<input type="text" id="f-desc" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${quick}`, opt);
+    const isFood = draft.type === 'food';
+    const favs = isFood ? favorites() : [];
+    const favSet = new Set(favs.map(f => f.desc.toLowerCase()));
+    const q = quickFor(draft.type).filter(t => !favSet.has(t.toLowerCase()));
+    const chipsHtml = favs.map((f, i) => `<button type="button" class="chip fav" data-fav="${i}">⭐ ${esc(f.desc)}</button>`).join('') +
+      q.map(t => `<button type="button" class="chip" data-q="${esc(t)}">${esc(t)}</button>`).join('');
+    const quick = chipsHtml ? `<div class="chips quick" style="margin-top:10px">${chipsHtml}</div>` : '';
+    const favBtn = isFood ? `<button type="button" class="btn ghost small" id="fav-btn" data-act="fav" style="margin-top:6px">${favBtnText()}</button>` : '';
+    return field(label, `<input type="text" id="f-desc" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${favBtn}${quick}`, opt);
+  }
+
+  function isFav(desc) { const d = desc.trim().toLowerCase(); return !!d && favorites().some(f => f.desc.toLowerCase() === d); }
+  function favBtnText() { return isFav(draft.desc) ? '★ V obľúbených (ťukni na odobratie)' : '☆ Uložiť ako obľúbené'; }
+
+  function tagChips() {
+    const eff = effectiveTags(), auto = autoTags(), risk = riskTags();
+    return '<div class="chips" id="tag-chips">' + TAGS.map(([v, e, tt]) => {
+      const on = eff.includes(v);
+      const isAuto = on && auto.includes(v) && !draft.tags.includes(v);
+      return `<button type="button" class="chip${on ? ' on' : ''}${risk.includes(v) ? ' risk' : ''}" data-tag="${v}">${e} ${esc(tt)}${isAuto ? ' ✨' : ''}</button>`;
+    }).join('') + '</div>';
+  }
+
+  function riskWarnHtml() {
+    const r = effectiveTags().filter(t => riskTags().includes(t));
+    return r.length ? `<div class="risk-warn">⚠️ Pozor, pravdepodobne obsahuje: <b>${r.map(t => esc(tagLabel(t))).join(', ')}</b></div>` : '';
+  }
+
+  function refreshFoodExtras() {
+    if (draft.type !== 'food') return;
+    const tc = $('#tag-chips');
+    if (tc) tc.outerHTML = tagChips();
+    const rw = $('#risk-warn');
+    if (rw) rw.innerHTML = riskWarnHtml();
+    const fb = $('#fav-btn');
+    if (fb) fb.textContent = favBtnText();
+  }
+
+  async function toggleFav() {
+    const d = draft.desc.trim();
+    if (!d) { toast('Najprv napíš, čo to bolo'); return; }
+    let list = favorites().slice();
+    if (isFav(d)) {
+      list = list.filter(f => f.desc.toLowerCase() !== d.toLowerCase());
+      toast('Odobraté z obľúbených');
+    } else {
+      list.unshift({ desc: d, tags: draft.tags.slice(), noTags: draft.noTags.slice(), place: draft.place, portion: draft.portion });
+      toast('Uložené medzi obľúbené ⭐');
+    }
+    await setMeta('favorites', list.slice(0, 20));
+    refreshFoodExtras();
+  }
+
+  // Pri rýchlom výbere prenesie aj skupiny a miesto z predchádzajúceho záznamu
+  function applyQuick(desc, src) {
+    const cur = draft.desc.trim();
+    const append = draft.type === 'food' && cur && !cur.toLowerCase().includes(desc.toLowerCase());
+    draft.desc = append ? cur + ', ' + desc : desc;
+    if (draft.type === 'food' && src) {
+      const tags = new Set(append ? draft.tags : []);
+      (src.tags || []).forEach(t => tags.add(t));
+      draft.tags = [...tags];
+      draft.noTags = append ? draft.noTags.concat(src.noTags || []) : (src.noTags || []).slice();
+      if (src.place && (!append || !draft.place)) { draft.place = src.place; const g = $('.chips[data-field="place"]'); if (g) refreshGroup(g, draft.place); }
+      if (src.portion && !append) { draft.portion = src.portion; const g = $('.chips[data-field="portion"]'); if (g) refreshGroup(g, draft.portion); }
+    }
+    const inp = $('#f-desc');
+    if (inp) { inp.value = draft.desc; inp.classList.remove('invalid'); }
+    refreshFoodExtras();
   }
 
   function timeField() {
@@ -297,9 +390,9 @@
     return field('Kedy?', `<input type="datetime-local" id="f-ts" value="${toLocalInput(draft.ts)}">
       <div class="time-row">
         <button type="button" class="chip" data-time="0">teraz</button>
-        <button type="button" class="chip" data-time="30">pred 30 min</button>
-        <button type="button" class="chip" data-time="60">pred 1 h</button>
-        <button type="button" class="chip" data-time="120">pred 2 h</button>
+        <button type="button" class="chip" data-time="30">−30 min</button>
+        <button type="button" class="chip" data-time="60">−1 h</button>
+        <button type="button" class="chip" data-time="120">−2 h</button>
       </div>`);
   }
 
@@ -327,9 +420,12 @@
 
     if (t === 'food') {
       h += descField('Čo si jedla alebo pila?', 'napr. chlieb s maslom, káva s mliekom');
+      h += `<div id="risk-warn">${riskWarnHtml()}</div>`;
       h += timeField();
+      h += field('Kde?', chipGroup('place', PLACES, {}), true);
       h += field('Porcia', chipGroup('portion', PORTION, { cls: 'seg' }), true);
-      h += field('Obsahovalo', chipGroup('tags', TAGS.map(([v, e, tt]) => [v, e + ' ' + tt]), { multi: true }), true);
+      h += field('Obsahovalo', tagChips() + '<p class="tiny" style="margin:6px 0 0">✨ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>', true);
+      h += `<div class="field"><label class="check"><input type="checkbox" id="f-enzyme"${draft.enzyme ? ' checked' : ''}> 💊 Užila som laktázu / enzým</label></div>`;
       h += `<div class="field"><label class="check"><input type="checkbox" id="f-rushed"${draft.rushed ? ' checked' : ''}> ⏱️ Jedla som v zhone / v strese</label></div>`;
       h += stressMoodNote();
     } else if (t === 'symptom') {
@@ -394,7 +490,10 @@
       stress: d.stress, mood: d.mood, note: d.note.trim(),
       created: old ? old.created : Date.now(), updated: Date.now(),
     };
-    if (type === 'food') Object.assign(e, { portion: d.portion, rushed: !!d.rushed, tags: d.tags.slice() });
+    if (type === 'food') Object.assign(e, {
+      portion: d.portion, rushed: !!d.rushed, tags: effectiveTags(), noTags: d.noTags.slice(),
+      place: d.place, enzyme: !!d.enzyme,
+    });
     if (type === 'symptom') Object.assign(e, { severity: d.severity, duration: d.duration.trim(), kinds: d.kinds.slice(), location: d.location });
     if (type === 'stool') Object.assign(e, { stool: d.stool });
 
@@ -407,6 +506,9 @@
     }
     if (old) entries[entries.indexOf(old)] = e; else entries.push(e);
     if (!meta.firstUse) await setMeta('firstUse', Date.now());
+    // ťažkosti v deň označený „bez ťažkostí“ → zrušiť označenie
+    const dd = days[dateStr(e.ts)];
+    if (type === 'symptom' && dd && dd.noSymptoms) { delete dd.noSymptoms; await DB.put('days', dd); }
 
     const wasEditing = !!editingId;
     editingId = null;
@@ -425,7 +527,9 @@
     draft.note = draft.note || '';
     draft.duration = draft.duration || '';
     draft.tags = draft.tags || [];
+    draft.noTags = draft.noTags || [];
     draft.kinds = draft.kinds || [];
+    draft.enzyme = !!draft.enzyme;
     switchView('add');
   }
 
@@ -455,8 +559,11 @@
   function metaText(e) {
     const p = [];
     if (e.type === 'food') {
+      if (e.place && e.place !== 'doma') p.push(lab(PLACES, e.place));
       if (e.portion) p.push(lab(PORTION, e.portion) + ' porcia');
-      (e.tags || []).forEach(t => { const x = TAGS.find(y => y[0] === t); if (x) p.push(x[1] + ' ' + x[2]); });
+      const risk = riskTags();
+      Analysis.mealTags(e).forEach(t => { const x = TAGS.find(y => y[0] === t); if (x) p.push((risk.includes(t) ? '⚠️' : '') + x[1] + ' ' + x[2]); });
+      if (e.enzyme) p.push('💊 enzým');
       if (e.rushed) p.push('⏱️ v zhone');
     }
     if (e.type === 'symptom') {
@@ -485,10 +592,10 @@
       byDay.get(d).push(e);
     });
     const dates = [...byDay.keys()].sort().reverse();
-    let h = '';
+    let h = renderCalendar();
     for (const d of dates.slice(0, listDays)) {
       const info = dayText(days[d]);
-      h += `<div class="day"><div class="day-head"><h2>${fmtDayHead(d)}</h2>
+      h += `<div class="day" id="day-${d}"><div class="day-head"><h2>${fmtDayHead(d)}</h2>
         <button type="button" class="btn ghost small" data-act="day-edit" data-date="${d}">${info ? 'deň ✎' : '+ údaje o dni'}</button></div>`;
       if (info) h += `<div class="day-info">${esc(info)}</div>`;
       for (const e of byDay.get(d)) {
@@ -498,6 +605,7 @@
           <span class="badge">${TYPES[e.type].ico}</span>
           <span><div class="desc">${esc(e.desc)}${sev}</div>${m ? `<div class="meta">${m}</div>` : ''}</span>
           <span class="time">${fmtTime(e.ts)}</span></button>`;
+        if (e.type === 'symptom') h += `<button type="button" class="trace-btn" data-trace="${e.id}">🔎 Čo predchádzalo?</button>`;
       }
       h += '</div>';
     }
@@ -505,12 +613,122 @@
     el.innerHTML = h;
   }
 
-  function openDayDialog(date) {
+  function renderDayDialog(date) {
     const dlg = $('#day-dialog');
+    const ns = noSymBtn(date);
     dlg.innerHTML = `<h2>${esc(fmtDateLong(date))}</h2><div class="today">${dayRows(date, days[date] || {})}</div>
+      ${ns ? '<div style="margin-top:6px">' + ns + '</div>' : ''}
       <div class="dialog-actions"><button type="button" class="btn primary" data-act="dialog-close">Hotovo</button></div>`;
     dlg.dataset.date = date;
+  }
+
+  function openDayDialog(date) {
+    const dlg = $('#day-dialog');
+    renderDayDialog(date);
     if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+  }
+
+  // ---------- Čo predchádzalo ťažkostiam ----------
+  function agoText(ms) {
+    const m = Math.round(ms / 60000);
+    if (m < 60) return 'pred ' + m + ' min';
+    const h = Math.floor(m / 60), r = m % 60;
+    return 'pred ' + h + ' h' + (r && h < 6 ? ' ' + r + ' min' : '');
+  }
+
+  function openTrace(id) {
+    const s = entries.find(e => e.id === id);
+    if (!s) return;
+    const from = s.ts - 48 * 3600e3;
+    const prior = entries.filter(e => e.id !== id && e.ts <= s.ts && e.ts >= from).sort((a, b) => b.ts - a.ts);
+    const risk = riskTags();
+    const tagCount = {};
+    let away = 0;
+    prior.filter(e => e.type === 'food').forEach(e => {
+      Analysis.mealTags(e).forEach(t => { tagCount[t] = (tagCount[t] || 0) + 1; });
+      if (e.place && e.place !== 'doma') away++;
+    });
+    const sumTags = Object.entries(tagCount).sort((a, b) => (risk.includes(b[0]) - risk.includes(a[0])) || b[1] - a[1]);
+    let h = `<h2>🔎 Čo predchádzalo</h2>
+      <p class="small muted" style="margin-top:-6px">${esc(s.desc)}${s.severity ? ' · sila ' + s.severity + '/10' : ''} · ${fmtDayHead(dateStr(s.ts))} ${fmtTime(s.ts)}</p>`;
+    if (sumTags.length) {
+      h += `<div class="trace-sum"><b>Za posledných 48 h:</b><div class="pending" style="margin-top:6px">` +
+        sumTags.map(([t, n]) => `<span class="${risk.includes(t) ? 'risk' : ''}">${esc(tagLabel(t))} ${n}×</span>`).join('') +
+        (away ? `<span>🍴 mimo domu ${away}×</span>` : '') + '</div></div>';
+    }
+    const dset = [...new Set([dateStr(s.ts), dateStr(s.ts - 864e5), dateStr(from)])];
+    const dinfo = dset.map(d => days[d] && dayText(days[d]) ? `<div class="tiny">${fmtDayHead(d)}: ${esc(dayText(days[d]))}</div>` : '').join('');
+    if (dinfo) h += `<div style="margin:8px 0">${dinfo}</div>`;
+    if (!prior.length) h += '<p class="muted">Za posledných 48 hodín nie je nič zapísané.</p>';
+    h += '<div class="trace-list">' + prior.map(e => {
+      const tags = e.type === 'food' ? Analysis.mealTags(e) : [];
+      const rt = tags.filter(t => risk.includes(t));
+      const extra = [];
+      if (e.type === 'food') {
+        if (e.place && e.place !== 'doma') extra.push(lab(PLACES, e.place));
+        if (e.enzyme) extra.push('💊 enzým');
+        if (e.rushed) extra.push('⏱️ v zhone');
+        if (e.portion === 'velka') extra.push('veľká porcia');
+      }
+      if (e.type === 'symptom' && e.severity) extra.push('sila ' + e.severity);
+      if (e.stress >= 4) extra.push('stres ' + e.stress);
+      return `<div class="trace-row${rt.length ? ' hot' : ''}">
+        <span class="ago">${agoText(s.ts - e.ts)}</span>
+        <span><b>${TYPES[e.type].ico} ${esc(e.desc)}</b>
+        ${tags.length ? `<div class="tiny">${tags.map(t => (risk.includes(t) ? '⚠️ ' : '') + esc(tagLabel(t))).join(' · ')}</div>` : ''}
+        ${extra.length ? `<div class="tiny">${esc(extra.join(' · '))}</div>` : ''}</span></div>`;
+    }).join('') + '</div>';
+    h += `<div class="dialog-actions"><button type="button" class="btn primary" data-act="trace-close">Zavrieť</button></div>`;
+    const dlg = $('#trace-dialog');
+    dlg.innerHTML = h;
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    dlg.scrollTop = 0;
+  }
+
+  // ---------- Kalendár ----------
+  let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const MONTHS = ['január', 'február', 'marec', 'apríl', 'máj', 'jún', 'júl', 'august', 'september', 'október', 'november', 'december'];
+
+  function renderCalendar() {
+    const y = calMonth.getFullYear(), mo = calMonth.getMonth();
+    const first = new Date(y, mo, 1);
+    const daysIn = new Date(y, mo + 1, 0).getDate();
+    const offset = (first.getDay() + 6) % 7; // pondelok = 0
+    const sev = {}, has = new Set();
+    entries.forEach(e => {
+      const d = dateStr(e.ts);
+      has.add(d);
+      if (e.type === 'symptom') sev[d] = Math.max(sev[d] || 0, e.severity || 1);
+    });
+    const today = todayStr();
+    let cells = '';
+    for (let i = 0; i < offset; i++) cells += '<span></span>';
+    for (let n = 1; n <= daysIn; n++) {
+      const d = y + '-' + pad(mo + 1) + '-' + pad(n);
+      const v = days[d] || {};
+      let cls = 'c-empty';
+      if (sev[d]) cls = sev[d] >= 7 ? 'c-high' : sev[d] >= 4 ? 'c-mid' : 'c-low';
+      else if (v.noSymptoms) cls = 'c-ok';
+      else if (has.has(d)) cls = 'c-none';
+      cells += `<button type="button" class="cal-d ${cls}${d === today ? ' today' : ''}" data-cal="${d}"${d > today ? ' disabled' : ''}>${n}${v.period ? '<i></i>' : ''}</button>`;
+    }
+    const isCur = y === new Date().getFullYear() && mo === new Date().getMonth();
+    return `<div class="card cal">
+      <div class="cal-head"><button type="button" class="btn ghost small" data-act="cal-prev" aria-label="Predchádzajúci mesiac">‹</button>
+        <b>${MONTHS[mo]} ${y}</b>
+        <button type="button" class="btn ghost small" data-act="cal-next" aria-label="Ďalší mesiac"${isCur ? ' disabled' : ''}>›</button></div>
+      <div class="cal-grid">${['Po', 'Ut', 'St', 'Št', 'Pi', 'So', 'Ne'].map(x => `<span class="cal-w">${x}</span>`).join('')}${cells}</div>
+      <div class="cal-legend"><span><i class="c-ok"></i>bez ťažkostí</span><span><i class="c-low"></i>slabé</span><span><i class="c-mid"></i>stredné</span><span><i class="c-high"></i>silné</span><span><i class="dot"></i>menštruácia</span></div>
+    </div>`;
+  }
+
+  function jumpToDay(d) {
+    const dates = [...new Set(entries.map(e => dateStr(e.ts)))].sort().reverse();
+    const idx = dates.indexOf(d);
+    if (idx < 0) { openDayDialog(d); return; }
+    if (idx >= listDays) { listDays = idx + 1; renderList(); }
+    const el = document.getElementById('day-' + d);
+    if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: 'smooth' });
   }
 
   // ---------- Súvislosti ----------
@@ -520,18 +738,26 @@
   }
 
   function resItem(r, kind) {
-    const name = r.group === 'food' ? r.label : (CTX_LABELS[r.key] || r.key);
-    const unit = kind === 'day' ? 'dní' : 'jedál';
-    const txt = kind === 'day'
-      ? `Ťažkosti v ${r.withHit} z ${r.withN} takých dní (${pct(r.rateWith)}) · inak ${pct(r.rateWithout)}`
-      : `Ťažkosti po ${r.withHit} z ${r.withN} ${unit} (${pct(r.rateWith)}) · inak po ${pct(r.rateWithout)}`;
-    const a = kind === 'day' ? 's tým' : (r.group === 'food' ? 's ním' : 's tým');
+    let name = r.group === 'food' ? r.label : (CTX_LABELS[r.key] || r.key);
+    let txt, a = 's tým', b = 'inak';
+    if (kind === 'day') {
+      txt = `Ťažkosti v ${r.withHit} z ${r.withN} takých dní (${pct(r.rateWith)}) · inak ${pct(r.rateWithout)}`;
+    } else if (kind === 'stack') {
+      name += ' – 2× a viac za 12 h';
+      txt = `Pri 2× a viac: ťažkosti po ${r.withHit} z ${r.withN} (${pct(r.rateWith)}) · pri 1×: ${r.outHit} z ${r.outN} (${pct(r.rateWithout)})`;
+      a = '2× a viac'; b = '1×';
+    } else if (kind === 'risk') {
+      txt = `Ťažkosti po ${r.withHit} z ${r.withN} takých jedál (${pct(r.rateWith)}) · inak po ${r.outHit} z ${r.outN} (${pct(r.rateWithout)})`;
+    } else {
+      txt = `Ťažkosti po ${r.withHit} z ${r.withN} jedál (${pct(r.rateWith)}) · inak po ${pct(r.rateWithout)}`;
+      if (r.group === 'food') a = 's ním';
+    }
     return `<div class="res lvl-${r.level}">
       <div class="res-top"><span class="res-name">${esc(name)}</span><span class="ratio">${ratioText(r)}</span></div>
       <div class="res-txt">${txt}</div>
       <div class="bars">
         <span>${a}</span><div class="bar w"><i style="width:${Math.round(r.rateWith * 100)}%"></i></div><span>${pct(r.rateWith)}</span>
-        <span>inak</span><div class="bar o"><i style="width:${Math.round(r.rateWithout * 100)}%"></i></div><span>${pct(r.rateWithout)}</span>
+        <span>${b}</span><div class="bar o"><i style="width:${Math.round(r.rateWithout * 100)}%"></i></div><span>${pct(r.rateWithout)}</span>
       </div></div>`;
   }
 
@@ -560,7 +786,8 @@
     const fromH = meta.fromH != null ? meta.fromH : 0;
     const toH = meta.toH != null ? meta.toH : 6;
     const minN = meta.minN || 5;
-    const r = Analysis.analyze(entries, days, { fromH, toH, minN });
+    const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
+    const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
 
     let h = `<div class="disclaimer"><b>ℹ️ Len pomôcka, nie diagnóza</b>
       Tieto čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Slúžia ako podklad na rozhovor s lekárom.
@@ -596,11 +823,39 @@
       h += resList(r.ctx, 'meal');
       h += pendingList(r.ctxPending, minN, false) + '</div>';
     }
+    // Rizikové jedlo – kedy vadí viac
+    h += `<div class="card"><h2>⚠️ Rizikové jedlo – kedy vadí viac</h2>`;
+    if (!riskTags().length) {
+      h += `<p class="small muted" style="margin:0">Nastav si svoje intolerancie v <b>Nastaveniach</b>. Potom tu uvidíš, či rizikové jedlo vadí viac
+        mimo domu, pri strese, počas menštruácie a či pomáha enzým.</p>`;
+    } else if (!r.riskCtx.length) {
+      h += `<p class="small muted" style="margin:0">Zatiaľ málo rizikových jedál na porovnanie (treba aspoň 3 v každej skupine).</p>`;
+    } else {
+      h += `<p class="tiny" style="margin:0 0 6px">Porovnáva len jedlá s tvojimi rizikovými surovinami. Zelená = ťažkosti zriedkavejšie.</p>`;
+      h += r.riskCtx.map(x => resItem(x.ratio < 0.7 && x.withN >= 3 ? Object.assign({}, x, { level: 'good' }) : x, 'risk')).join('');
+    }
+    h += '</div>';
+
+    if (r.stacking.length) {
+      h += `<div class="card"><h2>📚 Hromadenie</h2><p class="tiny" style="margin:0 0 6px">Vadí, keď sa tá istá skupina za 12 h nazbiera viackrát?</p>`;
+      h += resList(r.stacking, 'stack');
+      h += '</div>';
+    }
+
+    if (r2 && r2.totalN >= 10) {
+      const late = r2.foods.concat(r2.ctx.filter(x => x.key.startsWith('tag:'))).filter(x => x.level !== 'none').sort((a, b) => b.ratio - a.ratio || b.rateWith - a.rateWith);
+      h += `<div class="card"><h2>🌙 Na druhý deň (12–48 h)</h2><p class="tiny" style="margin:0 0 6px">Niektoré intolerancie sa prejavia až neskôr. Tu sú jedlá, po ktorých prišli ťažkosti o 12–48 h.</p>`;
+      h += late.length ? late.slice(0, 15).map(x => resItem(x, 'meal')).join('') : '<p class="muted small" style="margin:4px 0">Nič výrazné. 👍</p>';
+      h += '</div>';
+    }
+
     if (r.days.length || r.daysPending.length) {
       h += `<div class="card"><h2>📅 Deň</h2><p class="tiny" style="margin:0 0 6px">Porovnáva dni s ťažkosťami a bez nich (${r.dayTotal} dní s údajmi).</p>`;
       h += resList(r.days, 'day');
       h += pendingList(r.daysPending, minN, false) + '</div>';
     }
+
+    if (r.skipped) h += `<p class="tiny">${r.skipped} jedál nie je zarátaných, lebo v ten deň nie sú zapísané ťažkosti ani „Deň bez ťažkostí“.</p>`;
 
     h += `<div class="card"><h3>Ako to čítať</h3><p class="small muted" style="margin:0">
       <b>2×</b> znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných jedlách.
@@ -634,7 +889,9 @@
 
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
-    const data = { app: 'dennik-jedla', version: 1, exported: new Date().toISOString(), entries, days: Object.values(days) };
+    const settings = {};
+    ['intol', 'favorites', 'fromH', 'toH', 'minN'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
       await setMeta('lastBackup', Date.now());
@@ -651,7 +908,8 @@
 
   function buildCsv() {
     const head = ['Dátum', 'Čas', 'Typ', 'Popis', 'Sila', 'Trvanie', 'Stolica', 'Stres', 'Poznámka',
-      'Nálada', 'Porcia', 'V zhone', 'Obsahovalo', 'Druh ťažkostí', 'Miesto', 'Spánok', 'Menštruácia', 'Pohyb', 'Pitie'];
+      'Nálada', 'Porcia', 'V zhone', 'Obsahovalo', 'Druh ťažkostí', 'Miesto', 'Spánok', 'Menštruácia', 'Pohyb', 'Pitie',
+      'Kde jedla', 'Enzým', 'Deň bez ťažkostí'];
     const rows = [head];
     [...entries].sort((a, b) => a.ts - b.ts).forEach(e => {
       const d = new Date(e.ts);
@@ -662,10 +920,12 @@
         e.stress != null ? e.stress : '', e.note || '',
         e.mood != null ? e.mood + ' (' + MOOD_TXT[e.mood] + ')' : '',
         e.portion ? lab(PORTION, e.portion) : '', e.type === 'food' ? (e.rushed ? 'áno' : 'nie') : '',
-        (e.tags || []).map(t => { const x = TAGS.find(y => y[0] === t); return x ? x[2] : t; }).join(', '),
+        e.type === 'food' ? Analysis.mealTags(e).map(t => { const x = TAGS.find(y => y[0] === t); return x ? x[2] : t; }).join(', ') : '',
         (e.kinds || []).join(', '), e.location ? lab(LOCATION, e.location) : '',
         day.sleep ? lab(SLEEP, day.sleep) : '', day.period != null ? (day.period ? 'áno' : 'nie') : '',
         day.activity ? lab(ACTIVITY, day.activity) : '', day.water ? lab(WATER, day.water) : '',
+        e.place ? lab(PLACES, e.place).replace(/^\S+ /, '') : '', e.type === 'food' ? (e.enzyme ? 'áno' : 'nie') : '',
+        day.noSymptoms ? 'áno' : '',
       ]);
     });
     return '﻿' + rows.map(r => r.map(csvCell).join(';')).join('\r\n');
@@ -685,6 +945,11 @@
     if (!confirm(`Načítať zálohu s ${valid.length} záznamami?\n\nSúčasné záznamy zostanú, rovnaké sa prepíšu verziou zo zálohy.`)) return;
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
+    if (data.settings && typeof data.settings === 'object') {
+      for (const k of ['intol', 'favorites', 'fromH', 'toH', 'minN']) {
+        if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
+      }
+    }
     await load();
     toast('Obnovených ' + valid.length + ' záznamov ✓');
     renderSettings();
@@ -705,7 +970,17 @@
     const lbTxt = lb ? 'Posledná záloha: ' + daysAgoText(Math.floor((Date.now() - lb) / DAY)) +
       ' (' + new Date(lb).toLocaleDateString('sk-SK') + ')' : 'Zatiaľ si zálohu neurobila.';
     const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+    const favs = favorites();
     el.innerHTML = `
+      <div class="card"><h2>⚠️ Moje intolerancie</h2>
+        <p class="small muted" style="margin-top:0">Označ, čo ti vadí. Aplikácia ťa upozorní pri zápise a vyhodnotí, kedy ti to vadí viac.</p>
+        <div class="chips">${TAGS.map(([v, e, t]) => `<button type="button" class="chip${riskTags().includes(v) ? ' on' : ''}" data-intol="${v}">${e} ${esc(t)}</button>`).join('')}</div>
+      </div>
+      <div class="card"><h2>⭐ Obľúbené jedlá</h2>
+        ${favs.length ? '<div class="fav-list">' + favs.map((f, i) => `<div class="fav-row"><span>${esc(f.desc)}</span>
+          <button type="button" class="btn ghost small" data-act="fav-del" data-i="${i}" aria-label="Odobrať">✕</button></div>`).join('') + '</div>'
+        : '<p class="small muted" style="margin:0">Pri zápise jedla ťukni na <b>☆ Uložiť ako obľúbené</b>. Potom ho zapíšeš jedným ťuknutím.</p>'}
+      </div>
       <div class="card"><h2>💾 Záloha</h2>
         <p class="small muted" style="margin-top:0">Údaje sú uložené <b>len v tomto telefóne</b>. Raz týždenne si ulož zálohu,
         napr. do aplikácie Súbory, na iCloud alebo si ju pošli e-mailom.</p>
@@ -755,13 +1030,43 @@
     const q = t.closest('.chip[data-q]');
     if (q) {
       const val = q.dataset.q;
-      const cur = draft.desc.trim();
-      if (draft.type === 'food' && cur && !cur.toLowerCase().includes(val.toLowerCase())) draft.desc = cur + ', ' + val;
-      else draft.desc = val;
-      const inp = $('#f-desc');
-      if (inp) { inp.value = draft.desc; inp.classList.remove('invalid'); }
+      const src = entries.filter(e => e.type === draft.type && (e.desc || '').trim().toLowerCase() === val.toLowerCase())
+        .sort((a, b) => b.ts - a.ts)[0];
+      applyQuick(val, src);
       return;
     }
+
+    const fv = t.closest('.chip[data-fav]');
+    if (fv) { const f = favorites()[Number(fv.dataset.fav)]; if (f) applyQuick(f.desc, f); return; }
+
+    const tg = t.closest('.chip[data-tag]');
+    if (tg && tg.closest('#tag-chips')) {
+      const v = tg.dataset.tag;
+      if (effectiveTags().includes(v)) {
+        draft.tags = draft.tags.filter(x => x !== v);
+        if (autoTags().includes(v) && !draft.noTags.includes(v)) draft.noTags.push(v);
+      } else {
+        draft.noTags = draft.noTags.filter(x => x !== v);
+        if (!autoTags().includes(v)) draft.tags.push(v);
+      }
+      refreshFoodExtras();
+      return;
+    }
+
+    const it = t.closest('.chip[data-intol]');
+    if (it) {
+      const v = it.dataset.intol;
+      const list = riskTags().includes(v) ? riskTags().filter(x => x !== v) : riskTags().concat([v]);
+      await setMeta('intol', list);
+      it.classList.toggle('on', list.includes(v));
+      return;
+    }
+
+    const tr = t.closest('[data-trace]');
+    if (tr) { openTrace(tr.dataset.trace); return; }
+
+    const cd = t.closest('[data-cal]');
+    if (cd) { jumpToDay(cd.dataset.cal); return; }
 
     const tm = t.closest('[data-time]');
     if (tm) {
@@ -812,6 +1117,24 @@
       case 'day-edit': openDayDialog(act.dataset.date); break;
       case 'dialog-close': { const dlg = $('#day-dialog'); dlg.close ? dlg.close() : dlg.removeAttribute('open'); break; }
       case 'more-days': listDays += 14; renderList(); break;
+      case 'fav': toggleFav(); break;
+      case 'fav-del': {
+        await setMeta('favorites', favorites().filter((_, i) => i !== Number(act.dataset.i)));
+        renderSettings();
+        break;
+      }
+      case 'no-sym': {
+        const d = act.dataset.date || todayStr();
+        await setDayField(d, 'noSymptoms', true);
+        if (days[d] && !days[d].noSymptoms) delete days[d].noSymptoms;
+        toast(days[d] && days[d].noSymptoms ? 'Super, deň bez ťažkostí 👍' : 'Označenie zrušené');
+        if ($('#day-dialog').open) renderDayDialog(d);
+        if (currentView === 'add') renderToday(); else renderList();
+        break;
+      }
+      case 'cal-prev': calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderList(); break;
+      case 'cal-next': calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderList(); break;
+      case 'trace-close': { const dlg = $('#trace-dialog'); dlg.close ? dlg.close() : dlg.removeAttribute('open'); break; }
     }
   });
 
@@ -819,7 +1142,7 @@
 
   document.addEventListener('input', ev => {
     const t = ev.target;
-    if (t.id === 'f-desc') { draft.desc = t.value; t.classList.remove('invalid'); }
+    if (t.id === 'f-desc') { draft.desc = t.value; t.classList.remove('invalid'); refreshFoodExtras(); }
     else if (t.id === 'f-note') draft.note = t.value;
     else if (t.id === 'f-duration') {
       draft.duration = t.value;
@@ -834,6 +1157,7 @@
       const v = new Date(t.value).getTime();
       if (!isNaN(v)) { draft.ts = v; draft.tsTouched = true; t.classList.remove('invalid'); }
     } else if (t.id === 'f-rushed') draft.rushed = t.checked;
+    else if (t.id === 'f-enzyme') draft.enzyme = t.checked;
     else if (t.id === 'o-from' || t.id === 'o-to' || t.id === 'o-min') {
       let from = Number($('#o-from').value), to = Number($('#o-to').value);
       if (to <= from) { to = from + 2; }
@@ -871,6 +1195,14 @@
   });
 
   // ---------- Štart ----------
+  // poistka, keby sa načítala staršia verzia index.html s novým app.js
+  if (!document.getElementById('trace-dialog')) {
+    const dlg = document.createElement('dialog');
+    dlg.id = 'trace-dialog';
+    document.body.appendChild(dlg);
+  }
+  { const s = document.querySelector('.tab[data-view="settings"] span'); if (s) s.textContent = 'Nastavenia'; }
+
   async function start() {
     try {
       await load();
@@ -882,6 +1214,12 @@
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     switchView('add');
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      // keď sa nainštaluje nová verzia, stránku raz obnovíme, aby sedeli všetky súbory
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadController && !reloaded && !editingId && !draft.type) { reloaded = true; location.reload(); }
+      });
       navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
     }
   }
