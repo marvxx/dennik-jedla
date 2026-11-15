@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.0';
+  const APP_VERSION = '2.1';
   const DAY = 864e5;
 
   // ---------- Číselníky ----------
@@ -12,7 +12,11 @@
     stool:   { label: 'Stolica',       csv: 'Stolica',     ico: '🚽' },
     med:     { label: 'Lieky / iné',   csv: 'Lieky/iné',   ico: '💊' },
   };
-  const STOOL = [['tvrda', 'tvrdá'], ['normalna', 'normálna'], ['makka', 'mäkká'], ['hnacka', 'hnačka']];
+  TYPES.food.short = 'Jedlo'; TYPES.symptom.short = 'Ťažkosti'; TYPES.stool.short = 'Stolica'; TYPES.med.short = 'Lieky';
+  // Bristolská škála; staršie záznamy (tvrdá…hnačka) sa zobrazujú ďalej
+  const BRISTOL = [['b1', '1 – tvrdé hrudky'], ['b2', '2 – tvrdá, hrudkovitá'], ['b3', '3 – s prasklinami na povrchu'],
+    ['b4', '4 – hladká a mäkká'], ['b5', '5 – mäkké kúsky'], ['b6', '6 – kašovitá'], ['b7', '7 – vodnatá']];
+  const STOOL = BRISTOL.concat([['tvrda', 'tvrdá'], ['normalna', 'normálna'], ['makka', 'mäkká'], ['hnacka', 'hnačka']]);
   const PORTION = [['mala', 'malá'], ['normalna', 'normálna'], ['velka', 'veľká']];
   const TAGS = [
     ['mliecne', '🥛', 'mliečne / laktóza'], ['lepok', '🌾', 'lepok / pečivo'], ['fruktoza', '🍎', 'fruktóza / ovocie, med'],
@@ -45,7 +49,8 @@
     'risk&enzyme': '💊 s enzýmom (laktáza…)', 'risk&away': '🍴 mimo domu', 'risk&stress': '😬 pri strese 4–5',
     'risk&period': '🩸 počas menštruácie', 'risk&sleep': '😴 po zlom spánku', 'risk&rushed': '⏱️ v zhone',
   };
-  TAGS.forEach(([v, e, t]) => { CTX_LABELS['tag:' + v] = e + ' ' + t; CTX_LABELS['stack:' + v] = e + ' ' + t; });
+  TAGS.forEach(([v, e, t]) => { CTX_LABELS['tag:' + v] = e + ' ' + t; CTX_LABELS['stack:' + v] = e + ' ' + t; CTX_LABELS['load:' + v] = e + ' ' + t + ' – 2 a viac porcií za deň'; });
+  Object.assign(CTX_LABELS, { 'late': '🌙 jedlo po 20:00', 'gap:long': '⏳ jedlo po dlhej pauze (5 h a viac)', 'first:kava': '☕ káva ako prvé v daný deň' });
   PLACES.forEach(([v, l]) => { CTX_LABELS['place:' + v] = l; });
   const tagLabel = t => { const x = TAGS.find(y => y[0] === t); return x ? x[1] + ' ' + x[2] : t; };
 
@@ -149,7 +154,7 @@
     return {
       type: type || null, ts: Date.now(), tsTouched: false, desc: '', severity: null, duration: '',
       stool: null, stress: null, mood: null, note: '', portion: null, rushed: false,
-      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false, tsOff: 0, tsCustom: false,
+      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false, tsOff: 0, tsCustom: false, tagsAll: false,
     };
   }
 
@@ -210,6 +215,8 @@
       <div id="scrim"></div>
       <div class="sheet tall" id="entry-sheet" role="dialog" aria-label="Záznam"><form id="entry-form" autocomplete="off" novalidate></form></div>
       <div class="sheet tall" id="trace-dialog" role="dialog" aria-label="Čo predchádzalo"></div>
+      <div class="sheet" id="mini-sheet" role="dialog"></div>
+      <div class="sheet tall" id="report-sheet" role="dialog" aria-label="Prehľad pre lekára"></div>
       <div id="toast" role="status" aria-live="polite"></div>
       <input type="file" id="import-file" accept=".json,application/json" hidden>`;
   }
@@ -410,7 +417,17 @@
     const ticks = hours.map(h => `<span style="left:${x(h * 60)}%">${h}:00</span>`).join('');
     return `<div class="card ribbon-card"><h3>${esc(daySummary(list, d, true))}</h3>
       <div class="ribbon" aria-hidden="true">${marks}</div><div class="rb-ticks" aria-hidden="true">${ticks}</div>
-      <div class="rb-legend"><span><i></i>jedlo</span><span><i class="s"></i>ťažkosti (väčší kruh = silnejšie)</span>${isToday ? '<span><i class="n"></i>teraz</span>' : ''}</div></div>`;
+      <div class="rb-legend"><span><i></i>jedlo</span><span><i class="s"></i>ťažkosti (väčší kruh = silnejšie)</span>${isToday ? '<span><i class="n"></i>teraz</span>' : ''}</div>${riskLineHtml(list)}</div>`;
+  }
+
+  function riskLineHtml(list) {
+    const risk = riskTags();
+    if (!risk.length) return '';
+    const cnt = {};
+    list.filter(e => e.type === 'food').forEach(e => Analysis.mealTags(e).forEach(t => { if (risk.includes(t)) cnt[t] = (cnt[t] || 0) + 1; }));
+    const keys = Object.keys(cnt);
+    if (!keys.length) return '';
+    return `<p class="risk-line">⚠️ Rizikové suroviny v tento deň: ${keys.map(t => `<b>${esc(tagLabel(t))} ${cnt[t]}×</b>`).join(', ')}</p>`;
   }
 
   function entryRow(e) {
@@ -448,7 +465,7 @@
     let h = `<header class="lt"><div><h1>${title}</h1><p>${sub}</p></div>
       ${isToday ? '' : '<button type="button" class="btn small" data-act="go-today">Späť na dnes</button>'}</header>`;
     h += stripHtml();
-    if (isToday) h += bannerHtml();
+    if (isToday) h += bannerHtml() + testBannerHtml();
     if (list.length) {
       h += ribbonHtml(list, d);
       h += '<div class="tl">' + list.map(entryRow).join('') + '</div>';
@@ -487,33 +504,42 @@
     return `<div class="field"><span class="label">${label}${opt ? ' <span class="opt">(nepovinné)</span>' : ''}</span>${inner}</div>`;
   }
 
-  function descField(label, placeholder, opt) {
+  const grp = (title, inner, extra) => `<section class="grp"${extra || ''}>${title ? `<h4>${title}</h4>` : ''}${inner}</section>`;
+  const sw = (id, label, on) => `<label class="sw"><span>${label}</span><input type="checkbox" id="${id}"${on ? ' checked' : ''}></label>`;
+
+  function descField(placeholder) {
     const isFood = draft.type === 'food';
     const favs = isFood ? favorites() : [];
     const favSet = new Set(favs.map(f => f.desc.toLowerCase()));
     const q = quickFor(draft.type).filter(t => !favSet.has(t.toLowerCase()));
     const chipsHtml = favs.map((f, i) => `<button type="button" class="chip fav" data-fav="${i}">⭐ ${esc(f.desc)}</button>`).join('') +
       q.map(t => `<button type="button" class="chip" data-q="${esc(t)}">${esc(t)}</button>`).join('');
-    const quick = chipsHtml ? `<div class="chips quick" style="margin-top:10px">${chipsHtml}</div>` : '';
-    const favBtn = isFood ? `<button type="button" class="btn ghost small" id="fav-btn" data-act="fav" style="margin-top:6px">${favBtnText()}</button>` : '';
-    return field(label, `<input type="text" id="f-desc" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${favBtn}${quick}`, opt);
+    const quick = chipsHtml ? `<div class="chips quick scroll">${chipsHtml}</div>` : '';
+    const star = isFood ? `<button type="button" class="star${isFav(draft.desc) ? ' on' : ''}" id="fav-btn" data-act="fav" aria-label="Uložiť medzi obľúbené">${favBtnText()}</button>` : '';
+    return grp('', `<div class="desc-row"><input type="text" id="f-desc" class="big" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${star}</div>${quick}`);
   }
 
   function isFav(desc) { const d = desc.trim().toLowerCase(); return !!d && favorites().some(f => f.desc.toLowerCase() === d); }
-  function favBtnText() { return isFav(draft.desc) ? '★ V obľúbených (ťukni na odobratie)' : '☆ Uložiť ako obľúbené'; }
+  function favBtnText() { return isFav(draft.desc) ? '★' : '☆'; }
 
+  // Ukáže len rozpoznané, zvolené a rizikové skupiny; ostatné po ťuknutí na „ďalšie“
   function tagChips() {
     const eff = effectiveTags(), auto = autoTags(), risk = riskTags();
-    return '<div class="chips" id="tag-chips">' + TAGS.map(([v, e, tt]) => {
+    const shown = TAGS.filter(([v]) => draft.tagsAll || eff.includes(v) || risk.includes(v));
+    return '<div class="chips" id="tag-chips">' + shown.map(([v, e, tt]) => {
       const on = eff.includes(v);
       const isAuto = on && auto.includes(v) && !draft.tags.includes(v);
       return `<button type="button" class="chip${on ? ' on' : ''}${risk.includes(v) ? ' risk' : ''}" data-tag="${v}">${e} ${esc(tt)}${isAuto ? ' ✨' : ''}</button>`;
-    }).join('') + '</div>';
+    }).join('') + (draft.tagsAll ? '' : '<button type="button" class="chip add" data-act="tags-all">＋ ďalšie</button>') + '</div>';
   }
 
   function riskWarnHtml() {
-    const r = effectiveTags().filter(t => riskTags().includes(t));
-    return r.length ? `<div class="risk-warn">⚠️ Pozor, pravdepodobne obsahuje: <b>${r.map(t => esc(tagLabel(t))).join(', ')}</b></div>` : '';
+    const eff = effectiveTags();
+    const r = eff.filter(t => riskTags().includes(t));
+    let h = r.length ? `<div class="risk-warn">⚠️ Pozor, pravdepodobne obsahuje: <b>${r.map(t => esc(tagLabel(t))).join(', ')}</b></div>` : '';
+    const ts = meta.test;
+    if (ts && ts.tag && eff.includes(ts.tag)) h += `<div class="risk-warn">🧪 Toto máš počas testu vynechať: <b>${esc(ts.what)}</b></div>`;
+    return h;
   }
 
   function refreshFoodExtras() {
@@ -523,7 +549,7 @@
     const rw = $('#risk-warn');
     if (rw) rw.innerHTML = riskWarnHtml();
     const fb = $('#fav-btn');
-    if (fb) fb.textContent = favBtnText();
+    if (fb) { fb.textContent = favBtnText(); fb.classList.toggle('on', isFav(draft.desc)); }
   }
 
   async function toggleFav() {
@@ -563,28 +589,30 @@
     if (!draft.tsTouched && !editingId) draft.ts = Date.now();
     const custom = !!(editingId || draft.tsCustom);
     const chip = (m, l) => `<button type="button" class="chip${!custom && draft.tsOff === m ? ' on' : ''}" data-time="${m}">${l}</button>`;
-    return field('Kedy?', `<div class="time-row">${chip(0, 'teraz')}${chip(30, '−30 min')}${chip(60, '−1 h')}${chip(120, '−2 h')}
+    return grp('Kedy?', `<div class="time-row">${chip(0, 'teraz')}${chip(30, '−30 min')}${chip(60, '−1 h')}${chip(120, '−2 h')}
         <button type="button" class="chip${custom ? ' on' : ''}" data-act="time-custom">iný čas</button></div>
       <input type="datetime-local" id="f-ts" value="${toLocalInput(draft.ts)}"${custom ? '' : ' hidden'}>`);
   }
 
   function moreBlock() {
     const open = draft.stress != null || draft.mood != null || draft.note;
-    return `<details class="more"${open ? ' open' : ''}><summary>Stres, nálada, poznámka</summary>` +
+    return `<details class="grp more"${open ? ' open' : ''}><summary>Stres, nálada, poznámka</summary>` +
       field('Stres teraz', chipGroup('stress', [1, 2, 3, 4, 5].map(n => [n, String(n)]), { kind: 'num', cls: 'scale s5' }) +
-        '<div class="scale-ends"><span>pokoj</span><span>veľký stres</span></div>', true) +
-      field('Nálada', chipGroup('mood', MOODS, { kind: 'num', cls: 'scale s5 emoji' }), true) +
-      field('Poznámka', `<textarea id="f-note" placeholder="napr. jedla som neskoro, cestovanie…">${esc(draft.note)}</textarea>`, true) +
+        '<div class="scale-ends"><span>pokoj</span><span>veľký stres</span></div>') +
+      field('Nálada', chipGroup('mood', MOODS, { kind: 'num', cls: 'scale s5 emoji' })) +
+      `<div class="field" style="margin:0"><span class="label">Poznámka</span><textarea id="f-note" placeholder="napr. jedla som neskoro, cestovanie…">${esc(draft.note)}</textarea></div>` +
       '</details>';
   }
 
-  // Na úvodnom kroku: jedným ťuknutím zopakovať obľúbené alebo časté jedlo
+  const sevWord = n => n == null ? 'Ťukni na číslo: 1 je slabé, 10 neznesiteľné' : n + ' – ' + (n <= 3 ? 'slabé' : n <= 6 ? 'stredné' : n <= 8 ? 'silné' : 'neznesiteľné');
+
+  // Úvodný krok: jedným ťuknutím zopakovať obľúbené alebo časté jedlo
   function againHtml() {
     const favs = favorites();
     const favSet = new Set(favs.map(f => f.desc.toLowerCase()));
     const q = quickFor('food').filter(t => !favSet.has(t.toLowerCase())).slice(0, 8);
     if (!favs.length && !q.length) return '';
-    return `<span class="label">Zapísať znova</span><div class="chips quick">` +
+    return `<h4 class="again-h">Zapísať znova</h4><div class="chips quick">` +
       favs.map((f, i) => `<button type="button" class="chip fav" data-af="${i}">⭐ ${esc(f.desc)}</button>`).join('') +
       q.map(t => `<button type="button" class="chip" data-aq="${esc(t)}">${esc(t)}</button>`).join('') + '</div>';
   }
@@ -592,46 +620,48 @@
   function renderForm() {
     const f = $('#entry-form');
     const t = draft.type;
-    let h = `<div class="sheet-head"><h2>${editingId ? 'Upraviť záznam' : t ? TYPES[t].label : 'Čo chceš zapísať?'}</h2>
-      <button type="button" class="x" data-act="cancel-edit" aria-label="Zavrieť">✕</button></div>`;
-    h += `<div class="types${t ? ' picked' : ''}">` + Object.entries(TYPES).map(([k, v]) =>
-      `<button type="button" class="type-btn${t === k ? ' on' : ''}" data-type="${k}"><span class="ico">${v.ico}</span>${v.label}</button>`
-    ).join('') + '</div>';
+    $('#entry-sheet').classList.toggle('tall', !!t);
+    const close = '<button type="button" class="x" data-act="cancel-edit" aria-label="Zavrieť">✕</button>';
 
-    if (!t) { f.innerHTML = h + againHtml(); return; }
+    if (!t) {
+      const ns = currentView === 'today' && selDay === todayStr() ? noSymBtn(todayStr()) : '';
+      f.innerHTML = `<div class="sheet-head"><h2>Čo chceš zapísať?</h2>${close}</div>
+        <div class="acts">` + Object.entries(TYPES).map(([k, v]) =>
+          `<button type="button" class="type-btn act" data-type="${k}"><span class="ico">${v.ico}</span><span>${v.short}</span></button>`).join('') + `</div>
+        ${againHtml()}${ns ? `<div class="sheet-actions">${ns}</div>` : ''}`;
+      return;
+    }
+
+    let h = `<div class="sheet-head">${editingId ? '' : '<button type="button" class="x" data-act="form-back" aria-label="Späť">‹</button>'}
+      <span class="tbadge ${t}">${TYPES[t].ico}</span><h2>${editingId ? 'Upraviť záznam' : TYPES[t].label}</h2>${close}</div>`;
 
     if (t === 'food') {
-      h += descField('Čo si jedla alebo pila?', 'napr. chlieb s maslom, káva s mliekom');
+      h += descField('Čo si jedla alebo pila?');
       h += `<div id="risk-warn">${riskWarnHtml()}</div>`;
       h += timeField();
-      h += field('Porcia', chipGroup('portion', PORTION, { cls: 'seg' }), true);
-      h += field('Obsahovalo', tagChips() + '<p class="tiny" style="margin:6px 0 0">✨ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>', true);
-      h += `<div class="field"><label class="check"><input type="checkbox" id="f-enzyme"${draft.enzyme ? ' checked' : ''}> 💊 Užila som laktázu / enzým</label></div>`;
-      h += `<details class="more" id="ctx-more"${draft.place || draft.rushed ? ' open' : ''}><summary>Kde a ako som jedla</summary>` +
-        field('Kde?', chipGroup('place', PLACES, {}), true) +
-        `<div class="field"><label class="check"><input type="checkbox" id="f-rushed"${draft.rushed ? ' checked' : ''}> ⏱️ Jedla som v zhone / v strese</label></div></details>`;
-      h += moreBlock();
+      h += grp('Porcia', chipGroup('portion', PORTION, { cls: 'seg' }));
+      h += grp('Obsahovalo', tagChips() + '<p class="tiny" style="margin:8px 0 0">✨ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>');
+      h += grp('', sw('f-enzyme', '💊 Užila som laktázu / enzým', draft.enzyme) + sw('f-rushed', '⏱️ Jedla som v zhone', draft.rushed));
+      h += grp('Kde?', chipGroup('place', PLACES, {}));
     } else if (t === 'symptom') {
-      h += field('Aké ťažkosti?', chipGroup('kinds', KINDS, { multi: true }));
-      h += field('Sila ťažkostí', chipGroup('severity', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]),
-        { kind: 'num', cls: 'scale s10', chipCls: v => 'sev-' + v }) +
-        '<div class="scale-ends"><span>1 = slabé</span><span>10 = neznesiteľné</span></div>');
+      h += grp('Aké ťažkosti?', chipGroup('kinds', KINDS, { multi: true }));
+      h += grp('Aké silné?', chipGroup('severity', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]),
+        { kind: 'num', cls: 'sevrow', chipCls: v => 'sev-' + v }) + `<div class="sev-word" id="sev-word">${sevWord(draft.severity)}</div>`);
       h += timeField();
-      h += field('Kde to bolí?', chipGroup('location', LOCATION, {}), true);
-      h += field('Ako dlho to trvalo?', chipGroup('duration', DURATIONS, {}) +
-        `<input type="text" id="f-duration" style="margin-top:10px" value="${esc(draft.duration)}" placeholder="alebo napíš, napr. 40 min" enterkeyhint="done">`, true);
-      h += descField('Popis vlastnými slovami', 'napr. bodavá bolesť po jedle', true);
-      h += moreBlock();
+      h += grp('Kde to bolí?', chipGroup('location', LOCATION, {}));
+      h += grp('Ako dlho to trvalo?', chipGroup('duration', DURATIONS, {}) +
+        `<input type="text" id="f-duration" style="margin-top:10px" value="${esc(draft.duration)}" placeholder="alebo napíš, napr. 40 min" enterkeyhint="done">`);
+      h += descField('Popis vlastnými slovami (nepovinné)');
     } else if (t === 'stool') {
-      h += field('Typ stolice', chipGroup('stool', STOOL, { cls: 'seg' }));
-      h += descField('Popis', 'napr. s hlienom, nutkanie', true);
+      h += grp('Aká bola?', chipGroup('stool', BRISTOL, { cls: 'col' }) +
+        '<p class="tiny" style="margin:8px 0 0">Bristolská škála, ktorú používajú lekári: 1–2 zápcha, 3–4 v poriadku, 5–7 riedka.</p>');
       h += timeField();
-      h += moreBlock();
+      h += descField('Popis (nepovinné), napr. s hlienom');
     } else if (t === 'med') {
-      h += descField('Aký liek alebo čo iné?', 'napr. ibuprofén 400 mg, cvičenie');
+      h += descField('Aký liek alebo čo iné?');
       h += timeField();
-      h += moreBlock();
     }
+    h += moreBlock();
 
     h += `<div class="savebar">
       ${editingId ? '<button type="button" class="btn danger" data-act="delete">Zmazať</button>' : ''}
@@ -792,7 +822,8 @@
 
   function renderList() {
     const el = $('#view-list');
-    let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div></header>` + renderCalendar();
+    let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div></header>
+      <input type="search" id="q" value="${esc(searchQ)}" placeholder="🔍 Hľadať v denníku, napr. jogurt" enterkeyhint="search"><div id="q-res"></div>` + renderCalendar();
     const byDay = new Map();
     entries.forEach(e => {
       const d = dateStr(e.ts);
@@ -816,6 +847,22 @@
     h += '</div>';
     if (dates.length > listDays) h += `<button type="button" class="btn block" data-act="more-days">Zobraziť staršie dni</button>`;
     el.innerHTML = h;
+    renderSearch();
+  }
+
+  let searchQ = '';
+  function renderSearch() {
+    const box = $('#q-res');
+    if (!box) return;
+    const q = Analysis.norm(searchQ.trim());
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    const hits = entries.filter(e => Analysis.norm([e.desc, e.note, (e.kinds || []).join(' '),
+      e.type === 'food' ? Analysis.mealTags(e).map(tagLabel).join(' ') : ''].join(' ')).includes(q)).sort((a, b) => b.ts - a.ts);
+    box.innerHTML = hits.length
+      ? `<p class="tiny" style="margin:0 4px 6px">Nájdené: ${hits.length}×</p><div class="dayrows">` + hits.slice(0, 40).map(e =>
+        `<button type="button" class="dayrow fnd" data-cal="${dateStr(e.ts)}"><span>${TYPES[e.type].ico}</span>
+          <span><b>${esc(e.desc)}</b><small>${fmtDayHead(dateStr(e.ts))} o ${fmtTime(e.ts)}</small></span><span></span><span class="chev">›</span></button>`).join('') + '</div>'
+      : '<p class="muted small" style="margin:0 4px 14px">Nič sa nenašlo.</p>';
   }
 
   // ---------- Čo predchádzalo ťažkostiam ----------
@@ -907,28 +954,33 @@
     return (Math.round(r.ratio * 10) / 10).toString().replace('.', ',') + '×';
   }
 
+  function conf(r) { return r.withN >= 10 && r.withHit >= 3 ? 3 : r.withN >= 6 ? 2 : 1; }
+  const CONF_TXT = ['', 'málo údajov', 'náznak', 'silnejší vzorec'];
+  function resName(r) {
+    let n = r.group === 'food' ? r.label : (CTX_LABELS[r.key] || r.key);
+    if (r.group === 'stack') n += ' – 2× a viac za 12 h';
+    return n;
+  }
+
   function resItem(r, kind) {
-    let name = r.group === 'food' ? r.label : (CTX_LABELS[r.key] || r.key);
+    const name = resName(r);
     let txt, a = 's tým', b = 'inak';
-    if (kind === 'day') {
-      txt = `Ťažkosti v ${r.withHit} z ${r.withN} takých dní (${pct(r.rateWith)}) · inak ${pct(r.rateWithout)}`;
-    } else if (kind === 'stack') {
-      name += ' – 2× a viac za 12 h';
-      txt = `Pri 2× a viac: ťažkosti po ${r.withHit} z ${r.withN} (${pct(r.rateWith)}) · pri 1×: ${r.outHit} z ${r.outN} (${pct(r.rateWithout)})`;
-      a = '2× a viac'; b = '1×';
-    } else if (kind === 'risk') {
-      txt = `Ťažkosti po ${r.withHit} z ${r.withN} takých jedál (${pct(r.rateWith)}) · inak po ${r.outHit} z ${r.outN} (${pct(r.rateWithout)})`;
-    } else {
-      txt = `Ťažkosti po ${r.withHit} z ${r.withN} jedál (${pct(r.rateWith)}) · inak po ${pct(r.rateWithout)}`;
-      if (r.group === 'food') a = 's ním';
-    }
+    const w = `<b>${r.withHit} z ${r.withN}</b>`, o = `${r.outHit} z ${r.outN}`;
+    if (kind === 'day') txt = `V takéto dni boli ťažkosti ${w} dní. V ostatné dni ${o}.`;
+    else if (kind === 'load') { txt = `Keď sa to za deň nazbieralo, boli ťažkosti ${w} dní. Inak ${o} dní.`; a = '2 a viac'; b = 'menej'; }
+    else if (kind === 'stack') { txt = `Pri 2× a viac za 12 h prišli ťažkosti po ${w} jedál. Pri 1× po ${o}.`; a = '2× a viac'; b = '1×'; }
+    else if (kind === 'risk') txt = `Ťažkosti prišli po ${w} takých jedál. Inak po ${o}.`;
+    else { txt = `Ťažkosti prišli po ${w} jedál. Po ostatných jedlách ${o}.`; if (r.group === 'food') a = 's ním'; }
+    const c = conf(r);
     return `<div class="res lvl-${r.level}">
       <div class="res-top"><span class="res-name">${esc(name)}</span><span class="ratio">${ratioText(r)}</span></div>
       <div class="res-txt">${txt}</div>
       <div class="bars">
         <span>${a}</span><div class="bar w"><i style="width:${Math.round(r.rateWith * 100)}%"></i></div><span>${pct(r.rateWith)}</span>
         <span>${b}</span><div class="bar o"><i style="width:${Math.round(r.rateWithout * 100)}%"></i></div><span>${pct(r.rateWithout)}</span>
-      </div></div>`;
+      </div>
+      <div class="res-foot"><span class="conf c${c}"><i></i><i></i><i></i>${CONF_TXT[c]}</span>
+        <button type="button" class="pin" data-pin="${esc(name)}">📌 Zapísať zistenie</button></div></div>`;
   }
 
   function pendingList(list, minN, isFood) {
@@ -951,6 +1003,119 @@
     return `<select id="${id}">${options.map(([v, l]) => `<option value="${v}"${v === val ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
   }
 
+  // Po čom ťažkosti prichádzajú zriedkavejšie
+  function toleratedList(r) {
+    if (r.totalHit < 3) return [];
+    return r.foods.concat(r.ctx.filter(x => x.key.startsWith('tag:')))
+      .filter(x => x.ratio <= 0.6 && x.rateWith <= 0.2)
+      .sort((a, b) => a.rateWith - b.rateWith || b.withN - a.withN).slice(0, 14);
+  }
+
+  // ---------- Moje zistenia ----------
+  const FND_ICO = { bad: '⛔', ok: '✅', sus: '❓' };
+  const FND_TXT = { bad: 'vadí', ok: 'nevadí', sus: 'podozrivé' };
+  const findings = () => meta.findings || [];
+  let fDraft = null;
+
+  function findingsHtml() {
+    const list = findings();
+    return `<div class="card"><h2>📌 Moje zistenia</h2>` + (list.length
+      ? '<div class="dayrows flat">' + list.map(f => `<button type="button" class="dayrow fnd" data-fnd="${f.id}"><span>${FND_ICO[f.status]}</span>
+          <span><b>${esc(f.text)}</b>${f.note ? `<small>${esc(f.note)}</small>` : ''}</span><span></span><span class="chev">›</span></button>`).join('') + '</div>'
+      : '<p class="small muted" style="margin:0 0 10px">Sem si zapíš, čo ste už potvrdili alebo vylúčili. Postupne z toho vznikne tvoj vlastný zoznam.</p>') +
+      `<button type="button" class="btn small" data-act="fnd-new">＋ Pridať zistenie</button></div>`;
+  }
+
+  function openFinding(f) {
+    fDraft = Object.assign({ text: '', status: 'sus', note: '' }, f);
+    const t = fDraft.fromTest;
+    const opt = t
+      ? [['bad', '👍 Bez toho mi bolo lepšie'], ['ok', '🤷 Žiadny rozdiel'], ['sus', '❓ Neviem povedať']]
+      : [['bad', '⛔ Vadí mi to'], ['ok', '✅ Nevadí mi to'], ['sus', '❓ Podozrivé, treba overiť']];
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>${t ? 'Ako dopadol test?' : fDraft.id ? 'Upraviť zistenie' : 'Nové zistenie'}</h2>
+        <button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
+      grp('', `<input type="text" id="fd-text" class="big" value="${esc(fDraft.text)}" placeholder="napr. smotana, káva nalačno" enterkeyhint="done">`) +
+      grp('Čo ste zistili?', '<div class="chips col">' + opt.map(([v, l]) => `<button type="button" class="chip${fDraft.status === v ? ' on' : ''}" data-fs="${v}">${l}</button>`).join('') + '</div>') +
+      grp('Poznámka', `<textarea id="fd-note" placeholder="napr. malá porcia nevadí, veľká áno">${esc(fDraft.note)}</textarea>`) +
+      (t ? '<p class="tiny" style="margin:0 4px 12px">Ak bolo bez toho lepšie, skús to v pokojný deň zaradiť späť v malej porcii a sleduj 48 hodín. Až návrat ťažkostí podozrenie potvrdí.</p>' : '') +
+      `<div class="savebar">${fDraft.id ? '<button type="button" class="btn danger" data-act="fnd-del">Zmazať</button>' : ''}
+        <button type="button" class="btn primary" data-act="fnd-save">Uložiť</button></div>`;
+    openSheet('mini-sheet');
+  }
+
+  async function saveFinding() {
+    const text = $('#fd-text').value.trim();
+    if (!text) { toast('Napíš, čoho sa zistenie týka'); return; }
+    const f = { id: fDraft.id || uid(), text, status: fDraft.status, note: $('#fd-note').value.trim(), ts: fDraft.ts || Date.now() };
+    const list = findings().filter(x => x.id !== f.id);
+    list.unshift(f);
+    await setMeta('findings', list);
+    if (fDraft.fromTest) await setMeta('test', null);
+    closeSheet('mini-sheet');
+    toast('Zistenie uložené ✓');
+    render();
+  }
+
+  // ---------- Test podozrivého ----------
+  let tDraft = null;
+  function testInfo() {
+    const t = meta.test;
+    if (!t) return null;
+    const day0 = parseDay(todayStr()).getTime();
+    const passed = Math.round((day0 - t.start) / DAY);
+    const elapsed = Math.max(1, Math.min(t.days, passed + 1));
+    const symDays = new Set(entries.filter(e => e.type === 'symptom').map(e => dateStr(e.ts)));
+    const cnt = from => { let c = 0; for (let i = 0; i < elapsed; i++) if (symDays.has(dateStr(from + i * DAY + 12 * 3600e3))) c++; return c; };
+    const slips = t.tag ? entries.filter(e => e.type === 'food' && e.ts >= t.start && Analysis.mealTags(e).includes(t.tag)).length : 0;
+    return { t, elapsed, during: cnt(t.start), before: cnt(t.start - elapsed * DAY), slips, done: passed >= t.days };
+  }
+
+  function testBannerHtml() {
+    const i = testInfo();
+    if (!i) return '';
+    return `<div class="banner test"><div><b>🧪 Test: bez ${esc(i.t.what)}</b>${i.done ? 'Test je na konci. Výsledok zapíšeš v Súvislostiach.' : 'Deň ' + i.elapsed + ' z ' + i.t.days}</div></div>`;
+  }
+
+  function testHtml() {
+    const i = testInfo();
+    if (!i) {
+      return `<div class="card"><h2>🧪 Test podozrivého</h2><p class="small muted" style="margin:0 0 10px">Čísla ukážu len podozrenie.
+        Istotu dá až skúška: jednu vec na čas vynechať a sledovať, či je lepšie. Vždy len jednu vec naraz.</p>
+        <button type="button" class="btn small" data-act="test-new">Začať test</button></div>`;
+    }
+    return `<div class="card"><h2>🧪 Test: bez ${esc(i.t.what)}</h2>
+      <div class="prog"><i style="width:${Math.round(i.elapsed / i.t.days * 100)}%"></i></div>
+      <p class="small" style="margin:8px 0">Deň <b>${i.elapsed} z ${i.t.days}</b>${i.done ? ' – test je na konci' : ''}</p>
+      <p class="small muted" style="margin:0 0 12px">Dni s ťažkosťami počas testu: <b>${i.during} z ${i.elapsed}</b>.
+        Rovnako dlho pred testom: <b>${i.before} z ${i.elapsed}</b>.${i.slips ? ` ⚠️ Počas testu si to ${i.slips}× zjedla.` : ''}</p>
+      <div class="stack"><button type="button" class="btn small primary" data-act="test-end">Ukončiť a zapísať výsledok</button>
+        <button type="button" class="btn small ghost" data-act="test-cancel">Zrušiť test</button></div></div>`;
+  }
+
+  function openTestNew() {
+    tDraft = { tag: null, days: 14 };
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Nový test</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
+      grp('Čo na čas vynecháš?', '<div class="chips">' + TAGS.map(([v, e, t]) => `<button type="button" class="chip" data-tt="${v}">${e} ${esc(t)}</button>`).join('') + '</div>' +
+        '<input type="text" id="tt-text" style="margin-top:10px" placeholder="alebo napíš vlastné, napr. paradajky" enterkeyhint="done">') +
+      grp('Ako dlho?', '<div class="chips seg">' + [7, 14, 21].map(n => `<button type="button" class="chip${n === 14 ? ' on' : ''}" data-td="${n}">${n} dní</button>`).join('') + '</div>') +
+      '<p class="tiny" style="margin:0 4px 12px">Väčšie zmeny v strave a lieky vždy najprv preber s lekárom.</p>' +
+      `<div class="savebar"><button type="button" class="btn primary" data-act="test-start">Začať dnes</button></div>`;
+    openSheet('mini-sheet');
+  }
+
+  // ---------- Najlepšie a najhoršie dni ----------
+  function bestWorstHtml() {
+    const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+    if (!bw) return '';
+    const lab2 = r => r.key.startsWith('tag:') ? tagLabel(r.label) : r.label;
+    const chips = (list, cls) => list.length ? '<div class="pending">' + list.map(r => `<span class="${cls}">${esc(lab2(r))}</span>`).join('') + '</div>' : '<p class="tiny" style="margin:0">nič výrazné</p>';
+    return `<div class="card"><h2>⚖️ Najhoršie a najlepšie dni</h2>
+      <p class="tiny" style="margin:0 0 10px">Najhoršie: ${bw.worst.map(x => fmtDayHead(x.date) + ' (' + x.sev + '/10)').join(', ')}.<br>Najlepšie: ${bw.best.map(fmtDayHead).join(', ')}.</p>
+      <h4 class="mini-h">Jedlo sa len v najhorších dňoch</h4>${chips(bw.onlyWorst, 'risk')}
+      <h4 class="mini-h">Jedlo sa len v najlepších dňoch</h4>${chips(bw.onlyBest, 'good')}
+      ${bw.both.length ? `<h4 class="mini-h">Bolo v oboch, takže asi nerozhoduje</h4>${chips(bw.both, '')}` : ''}</div>`;
+  }
+
   function renderInsights() {
     const el = $('#view-insights');
     const fromH = meta.fromH != null ? meta.fromH : 0;
@@ -965,10 +1130,10 @@
       <label>Min. výskytov${sel('o-min', minN, [[3, '3×'], [5, '5×'], [8, '8×'], [10, '10×']])}</label>
     </div><p class="tiny" style="margin:8px 0 0">Ťažkosti sa priradia k jedlu, ak prišli ${fromH}–${toH} h po ňom.</p></div>`;
 
-    let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom prichádzajú ťažkosti častejšie.</p></div></header>
+    let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom je horšie a po čom dobre.</p></div></header>
       <div class="disclaimer"><b>ℹ️ Len pomôcka, nie diagnóza</b>
-      Tieto čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Slúžia ako podklad na rozhovor s lekárom.
-      Jedlo ani lieky nevynechávaj bez dohody s lekárom.</div>`;
+      Čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Jedlo ani lieky nevynechávaj bez dohody s lekárom.</div>
+      <button type="button" class="btn block" data-act="report" style="margin-bottom:14px">📄 Prehľad pre lekára na jednu stranu</button>`;
 
     h += `<div class="stat-row">
       <div class="stat"><div class="n">${r.totalN}</div><div class="l">vyhodnotených jedál</div></div>
@@ -977,11 +1142,12 @@
     </div>`;
 
     if (r.totalN < 10 || r.symptomCount < 3) {
-      h += `<div class="card"><h3>📈 Zbierame údaje</h3><p class="muted small" style="margin:0">
-        Vyhodnotenie začne dávať zmysel asi po 2 týždňoch pravidelného zapisovania
-        (aspoň 10 jedál a 3 záznamy ťažkostí). Zapisuj všetko, aj dni bez ťažkostí, tie sú rovnako dôležité.</p>
+      const p = Math.round((Math.min(r.totalN, 10) / 10 * 0.6 + Math.min(r.symptomCount, 3) / 3 * 0.4) * 100);
+      h += `<div class="card"><h3>📈 Zbierame údaje</h3><div class="prog"><i style="width:${p}%"></i></div>
+        <p class="muted small" style="margin:10px 0 0">Zatiaľ ${r.totalN} z 10 jedál a ${r.symptomCount} z 3 záznamov ťažkostí.
+        Vyhodnotenie začne dávať zmysel asi po 2 týždňoch. Zapisuj aj dni bez ťažkostí, sú rovnako dôležité.</p>
         ${pendingList(r.foodsPending, minN, true)}</div>`;
-      el.innerHTML = h + optsHtml;
+      el.innerHTML = h + findingsHtml() + testHtml() + optsHtml;
       return;
     }
 
@@ -989,12 +1155,18 @@
     h += resList(r.foods, 'meal', `Zatiaľ žiadna surovina nemá ${minN} výskytov.`);
     h += pendingList(r.foodsPending, minN, true) + '</div>';
 
+    const tol = toleratedList(r);
+    h += `<div class="card"><h2>💚 Čo znášam dobre</h2>` + (tol.length
+      ? `<p class="tiny" style="margin:0 0 8px">Po týchto jedlách prichádzajú ťažkosti zriedkavo. Číslo ukazuje, koľkokrát z koľkých.</p>
+         <div class="pending">${tol.map(x => `<span class="good">${esc(resName(x))} · ${x.withHit} z ${x.withN}</span>`).join('')}</div>`
+      : '<p class="small muted" style="margin:0">Zatiaľ málo údajov. Objavia sa tu jedlá, po ktorých býva pokoj.</p>') + '</div>';
+
     if (r.ctx.length || r.ctxPending.length) {
       h += `<div class="card"><h2>🧾 Skupiny a okolnosti jedla</h2>`;
       h += resList(r.ctx, 'meal');
       h += pendingList(r.ctxPending, minN, false) + '</div>';
     }
-    // Rizikové jedlo – kedy vadí viac
+
     h += `<div class="card"><h2>⚠️ Rizikové jedlo – kedy vadí viac</h2>`;
     if (!riskTags().length) {
       h += `<p class="small muted" style="margin:0">Nastav si svoje intolerancie v <b>Nastaveniach</b>. Potom tu uvidíš, či rizikové jedlo vadí viac
@@ -1006,6 +1178,12 @@
       h += r.riskCtx.map(x => resItem(x.ratio < 0.7 && x.withN >= 3 ? Object.assign({}, x, { level: 'good' }) : x, 'risk')).join('');
     }
     h += '</div>';
+
+    if (r.loads && r.loads.length) {
+      h += `<div class="card"><h2>🥛 Dávka za deň</h2><p class="tiny" style="margin:0 0 6px">Pri intoleranciách rozhoduje množstvo. Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Veľká porcia sa ráta viac, s enzýmom menej.</p>`;
+      h += resList(r.loads, 'load');
+      h += '</div>';
+    }
 
     if (r.stacking.length) {
       h += `<div class="card"><h2>📚 Hromadenie</h2><p class="tiny" style="margin:0 0 6px">Vadí, keď sa tá istá skupina za 12 h nazbiera viackrát?</p>`;
@@ -1020,20 +1198,110 @@
       h += '</div>';
     }
 
+    h += bestWorstHtml();
+
     if (r.days.length || r.daysPending.length) {
       h += `<div class="card"><h2>📅 Deň</h2><p class="tiny" style="margin:0 0 6px">Porovnáva dni s ťažkosťami a bez nich (${r.dayTotal} dní s údajmi).</p>`;
       h += resList(r.days, 'day');
       h += pendingList(r.daysPending, minN, false) + '</div>';
     }
 
+    h += findingsHtml() + testHtml();
+
     if (r.skipped) h += `<p class="tiny">${r.skipped} jedál nie je zarátaných, lebo v ten deň nie sú zapísané ťažkosti ani „Deň bez ťažkostí“.</p>`;
 
     h += `<div class="card"><h3>Ako to čítať</h3><p class="small muted" style="margin:0">
-      <b>2×</b> znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných jedlách.
-      Na vrchu sú najpodozrivejšie. Jedno jedlo obsahuje viac surovín, preto môže vyzerať podozrivo aj niečo,
-      čo sa jedáva spolu s pravým vinníkom. Červené = výrazný rozdiel, oranžové = mierny.
-      „Výrazne“ znamená, že bez tohto jedla sa ťažkosti v sledovanom čase neobjavili vôbec.</p></div>`;
+      <b>2×</b> znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných.
+      Jedno jedlo obsahuje viac surovín, preto môže vyzerať podozrivo aj niečo, čo sa jedáva spolu s pravým vinníkom.
+      Bodky ukazujú, koľko údajov za číslom je: jedna bodka je len málo údajov, tri sú silnejší vzorec.
+      „Výrazne“ znamená, že inak sa ťažkosti v sledovanom čase neobjavili vôbec.</p></div>`;
     el.innerHTML = h + optsHtml;
+  }
+
+  // ---------- Prehľad pre lekára ----------
+  function buildReport() {
+    const all = [...entries].sort((a, b) => a.ts - b.ts);
+    if (!all.length) return null;
+    const now = Date.now();
+    const from = Math.max(all[0].ts, now - 30 * DAY);
+    const E = all.filter(e => e.ts >= from);
+    const dset = new Set(E.map(e => dateStr(e.ts)));
+    const sym = E.filter(e => e.type === 'symptom');
+    const symDays = new Set(sym.map(e => dateStr(e.ts)));
+    const top = (arr, n) => {
+      const m = new Map();
+      arr.filter(Boolean).forEach(x => m.set(x, (m.get(x) || 0) + 1));
+      return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n || 6).map(([k, v]) => k + ' ' + v + '×').join(', ') || '–';
+    };
+    const fd = ts => { const d = new Date(ts); return d.getDate() + '. ' + (d.getMonth() + 1) + '. ' + d.getFullYear(); };
+    const part = ts => { const h = new Date(ts).getHours(); return h < 5 ? 'v noci' : h < 11 ? 'ráno' : h < 17 ? 'cez deň' : h < 23 ? 'večer' : 'v noci'; };
+    const sevs = sym.map(e => e.severity).filter(x => x != null);
+    const r = Analysis.analyze(entries, days, { fromH: 0, toH: 6, minN: meta.minN || 5, riskTags: riskTags() });
+    const line = x => `${resName(x)}: ťažkosti ${x.withHit} z ${x.withN} (${pct(x.rateWith)}), inak ${pct(x.rateWithout)}`;
+    const sus = r.foods.concat(r.ctx).filter(x => x.level !== 'none').sort((a, b) => b.ratio - a.ratio).slice(0, 8);
+    const dayF = r.days.concat(r.loads || []).filter(x => x.level !== 'none');
+    const S = [];
+    S.push(['Obdobie', [`${fd(from)} – ${fd(now)}`, `Záznamy v ${dset.size} dňoch, ${E.filter(e => e.type === 'food').length} jedál a nápojov`]]);
+    S.push(['Ťažkosti', sym.length ? [
+      `${sym.length} záznamov v ${symDays.size} dňoch z ${dset.size}`,
+      sevs.length ? `Sila (1–10): priemer ${(sevs.reduce((a, b) => a + b, 0) / sevs.length).toFixed(1).replace('.', ',')}, najviac ${Math.max(...sevs)}` : '',
+      'Druh: ' + top(sym.flatMap(e => e.kinds || [])),
+      'Čas dňa: ' + top(sym.map(e => part(e.ts))),
+      'Miesto: ' + top(sym.map(e => e.location ? lab(LOCATION, e.location) : '')),
+      'Trvanie: ' + top(sym.map(e => e.duration)),
+    ].filter(Boolean) : ['Žiadne záznamy ťažkostí']]);
+    S.push(['Stolica', [top(E.filter(e => e.type === 'stool').map(e => e.stool ? lab(STOOL, e.stool) : e.desc), 7)]]);
+    S.push(['Známe intolerancie', [riskTags().map(t => tagLabel(t).replace(/^\S+ /, '')).join(', ') || 'neuvedené']]);
+    S.push(['Po čom prichádzajú ťažkosti častejšie (do 6 h po jedle)', sus.length ? sus.map(line) : ['Zatiaľ nič výrazné alebo málo údajov']]);
+    const tol = toleratedList(r);
+    if (tol.length) S.push(['Čo znáša dobre', [tol.map(x => resName(x) + ' (' + x.withHit + ' z ' + x.withN + ')').join(', ')]]);
+    if (dayF.length) S.push(['Okolnosti dňa', dayF.map(x => `${resName(x)}: ťažkosti ${x.withHit} z ${x.withN} dní, inak ${x.outHit} z ${x.outN}`)]);
+    if (findings().length) S.push(['Vlastné zistenia', findings().map(f => `${f.text} – ${FND_TXT[f.status]}${f.note ? ' (' + f.note + ')' : ''}`)]);
+    S.push(['Lieky a iné', [top(E.filter(e => e.type === 'med').map(e => e.desc), 8)]]);
+    return S;
+  }
+
+  function reportText(S) {
+    return 'DENNÍK JEDLA A TRÁVENIA – PREHĽAD\n\n' + S.map(([h, l]) => h.toUpperCase() + '\n' + l.map(x => '• ' + x.replace(/[\u{1F000}-\u{1FFFF}☀-➿️]/gu, '').trim()).join('\n')).join('\n\n') +
+      '\n\nÚdaje zapísala pacientka sama. Súvislosti sú len časová zhoda, nie diagnóza.';
+  }
+
+  function openReport() {
+    const S = buildReport();
+    if (!S) { toast('Zatiaľ žiadne záznamy'); return; }
+    $('#report-sheet').innerHTML = `<div class="sheet-head noprint"><h2>Prehľad pre lekára</h2><button type="button" class="x" data-act="report-close" aria-label="Zavrieť">✕</button></div>
+      <div class="report"><h1>Denník jedla a trávenia – prehľad</h1>` +
+      S.map(([h, l]) => `<h3>${esc(h)}</h3><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`).join('') +
+      `<p class="tiny">Údaje zapísala pacientka sama. Súvislosti sú len časová zhoda, nie diagnóza.</p></div>
+      <div class="savebar noprint"><button type="button" class="btn" data-act="report-share">Zdieľať ako text</button>
+        <button type="button" class="btn primary" data-act="report-print">Tlačiť / PDF</button></div>`;
+    openSheet('report-sheet');
+  }
+
+  async function shareReport() {
+    const text = reportText(buildReport());
+    try {
+      if (navigator.share) { await navigator.share({ title: 'Denník jedla – prehľad', text }); return; }
+      await navigator.clipboard.writeText(text);
+      toast('Skopírované ✓');
+    } catch (ex) {
+      if (!ex || ex.name !== 'AbortError') toast('Nepodarilo sa zdieľať');
+    }
+  }
+
+  // ---------- Večerná pripomienka (udalosť do Kalendára) ----------
+  async function doReminder() {
+    const hh = $('#rem-time').value;
+    const d = new Date();
+    const z = n => String(n).padStart(2, '0');
+    const day = d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate());
+    const stamp = d.toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//dennik-jedla//SK', 'BEGIN:VEVENT',
+      'UID:pripomienka-' + hh + '@dennik-jedla', 'DTSTAMP:' + stamp, 'DTSTART:' + day + 'T' + hh + '0000', 'DURATION:PT5M',
+      'RRULE:FREQ=DAILY', 'SUMMARY:Denník: aký bol dnešný deň?', 'DESCRIPTION:Otvor Denník jedla a zapíš deň.',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Denník: aký bol dnešný deň?', 'TRIGGER:PT0M', 'END:VALARM',
+      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    await saveFile('dennik-pripomienka.ics', 'text/calendar', ics);
   }
 
   // ---------- Záloha a export ----------
@@ -1161,8 +1429,13 @@
           <button type="button" class="btn block" data-act="restore">📂 Obnoviť zo zálohy</button>
         </div></div>
       <div class="card"><h2>📄 Pre lekára</h2>
-        <p class="small muted" style="margin-top:0">Tabuľka všetkých záznamov, otvorí sa v Exceli alebo Numbers.</p>
-        <button type="button" class="btn block" data-act="csv">📄 Export do tabuľky (CSV)</button></div>
+        <p class="small muted" style="margin-top:0">Krátky prehľad na vizitu, alebo tabuľka všetkých záznamov do Excelu či Numbers.</p>
+        <div class="stack"><button type="button" class="btn primary block" data-act="report">📄 Prehľad na jednu stranu</button>
+        <button type="button" class="btn block" data-act="csv">📊 Všetky záznamy do tabuľky (CSV)</button></div></div>
+      <div class="card"><h2>🔔 Večerná pripomienka</h2>
+        <p class="small muted" style="margin-top:0">Aplikácia sama upozorniť nevie. Pripomienku ti však pridá do Kalendára v iPhone ako udalosť, ktorá sa opakuje každý deň.</p>
+        <div class="stack"><select id="rem-time"><option value="19">19:00</option><option value="20" selected>20:00</option><option value="21">21:00</option><option value="22">22:00</option></select>
+        <button type="button" class="btn block" data-act="reminder">Pridať do Kalendára</button></div></div>
       ${standalone ? '' : `<div class="card"><h2>📱 Pridať na plochu</h2><ol class="steps small">
         <li>Otvor túto stránku v <b>Safari</b>.</li>
         <li>Ťukni na tlačidlo <b>Zdieľať</b> (štvorec so šípkou).</li>
@@ -1269,6 +1542,24 @@
       return;
     }
 
+    const pin = t.closest('[data-pin]');
+    if (pin) { openFinding({ text: pin.dataset.pin.replace(/^[^\p{L}\p{N}]+/u, ''), status: 'sus' }); return; }
+
+    const fnd = t.closest('[data-fnd]');
+    if (fnd) { const f = findings().find(x => x.id === fnd.dataset.fnd); if (f) openFinding(f); return; }
+
+    const fs = t.closest('[data-fs]');
+    if (fs) { fDraft.status = fs.dataset.fs; $$('[data-fs]').forEach(c => c.classList.toggle('on', c === fs)); return; }
+
+    const tt = t.closest('[data-tt]');
+    if (tt) {
+      tDraft.tag = tDraft.tag === tt.dataset.tt ? null : tt.dataset.tt;
+      $$('[data-tt]').forEach(c => c.classList.toggle('on', c.dataset.tt === tDraft.tag));
+      return;
+    }
+    const td = t.closest('[data-td]');
+    if (td) { tDraft.days = Number(td.dataset.td); $$('[data-td]').forEach(c => c.classList.toggle('on', c === td)); return; }
+
     const tr = t.closest('[data-trace]');
     if (tr) { openTrace(tr.dataset.trace); return; }
 
@@ -1311,6 +1602,7 @@
       }
       refreshGroup(group, draft[f]);
       if (f === 'duration') $('#f-duration').value = draft.duration;
+      if (f === 'severity') $('#sev-word').textContent = sevWord(draft.severity);
       return;
     }
 
@@ -1342,6 +1634,7 @@
         await setDayField(d, 'noSymptoms', true);
         if (days[d] && !days[d].noSymptoms) delete days[d].noSymptoms;
         toast(days[d] && days[d].noSymptoms ? 'Super, deň bez ťažkostí 👍' : 'Označenie zrušené');
+        if (openSheets.includes('entry-sheet') && !draft.type) closeSheet('entry-sheet');
         render();
         break;
       }
@@ -1355,6 +1648,53 @@
       case 'cal-prev': calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderList(); break;
       case 'cal-next': calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderList(); break;
       case 'trace-close': closeSheet('trace-dialog'); break;
+      case 'form-back': {
+        const keep = draft.tsCustom ? { ts: draft.ts, tsTouched: true, tsCustom: true } : null;
+        if (draftDirty() && !confirm('Zahodiť rozpracovaný záznam?')) break;
+        draft = newDraft();
+        if (keep) Object.assign(draft, keep);
+        renderForm();
+        break;
+      }
+      case 'tags-all': draft.tagsAll = true; refreshFoodExtras(); break;
+      case 'mini-close': closeSheet('mini-sheet'); break;
+      case 'fnd-new': openFinding({}); break;
+      case 'fnd-save': saveFinding(); break;
+      case 'fnd-del': {
+        if (!confirm('Zmazať toto zistenie?')) break;
+        await setMeta('findings', findings().filter(x => x.id !== fDraft.id));
+        closeSheet('mini-sheet');
+        render();
+        break;
+      }
+      case 'test-new': openTestNew(); break;
+      case 'test-start': {
+        const txt = $('#tt-text').value.trim();
+        const tg = TAGS.find(x => x[0] === tDraft.tag);
+        if (!txt && !tg) { toast('Vyber alebo napíš, čo vynecháš'); break; }
+        await setMeta('test', { what: txt || tg[2], tag: txt ? null : tg[0], start: parseDay(todayStr()).getTime(), days: tDraft.days });
+        closeSheet('mini-sheet');
+        toast('Test sa začal 🧪');
+        render();
+        break;
+      }
+      case 'test-end': {
+        const i = testInfo();
+        if (i) openFinding({ text: i.t.what, status: 'sus', fromTest: true,
+          note: `Test ${i.elapsed} dní bez toho: ťažkosti ${i.during} z ${i.elapsed} dní, predtým ${i.before} z ${i.elapsed}.` });
+        break;
+      }
+      case 'test-cancel': {
+        if (!confirm('Zrušiť prebiehajúci test?')) break;
+        await setMeta('test', null);
+        render();
+        break;
+      }
+      case 'report': openReport(); break;
+      case 'report-close': closeSheet('report-sheet'); break;
+      case 'report-print': window.print(); break;
+      case 'report-share': shareReport(); break;
+      case 'reminder': doReminder(); break;
     }
   });
 
@@ -1362,6 +1702,7 @@
     const t = ev.target;
     if (t.id === 'f-desc') { draft.desc = t.value; t.classList.remove('invalid'); refreshFoodExtras(); }
     else if (t.id === 'f-note') draft.note = t.value;
+    else if (t.id === 'q') { searchQ = t.value; renderSearch(); }
     else if (t.id === 'f-duration') {
       draft.duration = t.value;
       const g = $('.chips[data-field="duration"]');
@@ -1390,7 +1731,7 @@
   });
 
   document.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && ev.target.type === 'text') {
+    if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && (ev.target.type === 'text' || ev.target.type === 'search')) {
       ev.preventDefault();
       ev.target.blur();
     }

@@ -170,6 +170,8 @@
       s.labels.set(label, (s.labels.get(label) || 0) + 1);
     }
 
+    const foodTimes = entries.filter(e => e.type === 'food').map(e => e.ts).sort((a, b) => a - b);
+    const prevFood = ts => { let p = null; for (const t of foodTimes) { if (t < ts) p = t; else break; } return p; };
     const info = [];   // pomocné údaje o každom jedle
     for (const m of meals) {
       const hit = followed(m.ts);
@@ -186,6 +188,13 @@
       if (m.portion === 'velka') bump(ctxStats, 'portion:velka', 'portion:velka', hit);
       if (m.stress != null && m.stress >= 4) bump(ctxStats, 'stress:high', 'stress:high', hit);
       if (m.mood != null && m.mood <= 2) bump(ctxStats, 'mood:low', 'mood:low', hit);
+      // Stravovacie návyky vypočítané z času jedla
+      const hr = new Date(m.ts).getHours();
+      const prev = prevFood(m.ts);
+      const sameDay = prev != null && localDate(prev) === localDate(m.ts);
+      if (hr >= 20) bump(ctxStats, 'late', 'late', hit);
+      if (sameDay && m.ts - prev >= 5 * HOUR) bump(ctxStats, 'gap:long', 'gap:long', hit);
+      if (!sameDay && tags.includes('kava')) bump(ctxStats, 'first:kava', 'first:kava', hit);
     }
 
     function finish(map, group) {
@@ -268,18 +277,73 @@
     }
     dayReady.sort(sortResults);
 
+    // Denná dávka: 2 a viac porcií tej istej skupiny za deň (porcia a enzým menia váhu)
+    const loads = [];
+    {
+      const foodDays = new Set(allFood.map(e => localDate(e.ts)));
+      const known = [...foodDays].filter(d => d < today && (!usesNoSym || dayKnown(d)));
+      const kHit = known.filter(d => symDays.has(d)).length;
+      const perDay = {};
+      for (const e of allFood) {
+        const d = localDate(e.ts);
+        let w = e.portion === 'mala' ? 0.5 : e.portion === 'velka' ? 1.5 : 1;
+        if (e.enzyme) w *= 0.5;
+        for (const t of mealTags(e)) { (perDay[d] = perDay[d] || {})[t] = ((perDay[d] || {})[t] || 0) + w; }
+      }
+      for (const t of allTags) {
+        const w = known.filter(d => perDay[d] && perDay[d][t] >= 2);
+        const wHit = w.filter(d => symDays.has(d)).length;
+        if (w.length >= minSub && known.length - w.length >= minSub) loads.push(summarize('load:' + t, t, w.length, wHit, known.length, kHit, 'load'));
+      }
+      loads.sort(sortResults);
+    }
+
     return {
       totalN, totalHit, baseRate: totalN ? totalHit / totalN : 0,
       symptomCount: symTimes.length,
       foods: foods.ready, foodsPending: foods.pending,
       ctx: ctx.ready, ctxPending: ctx.pending,
       days: dayReady, daysPending: dayPending, dayTotal: dTotal, dayHit: dHit,
-      riskCtx, stacking, skipped, usesNoSym,
+      riskCtx, stacking, loads, skipped, usesNoSym,
       opts: { fromH, toH, minN },
     };
   }
 
-  const api = { analyze, tokenize, stem, norm, localDate, detectTags, mealTags };
+  // Najhoršie a najlepšie dni: čo sa jedlo len v jedných a nie v druhých
+  function bestWorst(entries, days, now) {
+    days = days || {};
+    const today = localDate(now || Date.now());
+    const sev = {}, foods = {};
+    for (const e of entries) {
+      const d = localDate(e.ts);
+      if (d >= today) continue;
+      if (e.type === 'symptom') sev[d] = Math.max(sev[d] || 0, e.severity || 1);
+      if (e.type === 'food') (foods[d] = foods[d] || []).push(e);
+    }
+    const usesNoSym = Object.values(days).some(v => v && v.noSymptoms);
+    const worst = Object.keys(sev).filter(d => foods[d]).sort((a, b) => sev[b] - sev[a] || (a < b ? 1 : -1)).slice(0, 3);
+    const best = Object.keys(foods).filter(d => !sev[d] && (usesNoSym ? days[d] && days[d].noSymptoms : foods[d].length >= 2))
+      .sort().reverse().slice(0, 3);
+    if (worst.length < 2 || best.length < 2) return null;
+    const collect = list => {
+      const m = new Map();
+      for (const d of list) {
+        const seen = new Map();
+        for (const e of foods[d]) {
+          for (const t of mealTags(e)) seen.set('tag:' + t, t);
+          for (const [k, w] of tokenize(e.desc)) seen.set('w:' + k, w);
+        }
+        for (const [k, l] of seen) { const r = m.get(k) || { key: k, label: l, n: 0 }; r.n++; m.set(k, r); }
+      }
+      return m;
+    };
+    const W = collect(worst), B = collect(best);
+    const only = (A, O) => [...A.values()].filter(r => r.n >= 2 && !O.has(r.key)).sort((a, b) => b.n - a.n).slice(0, 10);
+    const both = [...W.values()].filter(r => B.has(r.key) && r.n >= 2 && B.get(r.key).n >= 2).slice(0, 10);
+    return { worst: worst.map(d => ({ date: d, sev: sev[d] })), best, onlyWorst: only(W, B), onlyBest: only(B, W), both };
+  }
+
+  const api = { analyze, bestWorst, tokenize, stem, norm, localDate, detectTags, mealTags };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);
