@@ -602,3 +602,16 @@ input[type="search"]:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .entry.flash .ecard { animation: entry-in .5s cubic-bezier(.2, .9, .3, 1) both, flash 1.6s .2s ease-out; }
 @keyframes entry-in { from { transform: translateY(-10px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { #done .ic { stroke-dashoffset: 0; } }
+
+/* ---------- 2.6: skenovanie výrobkov ---------- */
+.scanbox { position: relative; height: 46vh; min-height: 240px; border-radius: 20px; overflow: hidden; background: #0b1416; }
+.scanbox video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scanbox canvas { display: none; }
+.scanbox::after { content: ""; position: absolute; left: 10%; right: 10%; top: 50%; height: 2px; margin-top: -1px; border-radius: 1px; background: var(--sun); box-shadow: 0 0 12px var(--sun); opacity: .9; pointer-events: none; }
+.prod-top { display: flex; align-items: center; gap: 10px; }
+.prod-top > span:nth-child(2) { flex: 1; min-width: 0; }
+.prod-top b { display: block; font-weight: 700; word-break: break-word; }
+.prod-top small { display: block; font-size: 13px; color: var(--ink-3); }
+.prod-top .tbadge { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; font-size: 19px; flex-shrink: 0; }
+.prod-top .x { width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--bg); color: var(--ink-2); font-size: 14px; padding: 0; flex-shrink: 0; }
+.desc-row .star .ic { font-size: 20px; }

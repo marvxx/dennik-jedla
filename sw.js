@@ -1,8 +1,8 @@
 /* Service worker: aplikácia funguje aj bez internetu.
    Pri každej novej verzii zvýš číslo v CACHE. */
-const CACHE = 'dennik-v8';
+const CACHE = 'dennik-v9';
 const ASSETS = [
-  './', './index.html', './style.css', './app.js', './analysis.js', './manifest.json',
+  './', './index.html', './style.css', './app.js', './analysis.js', './scan.js', './vendor/quagga.min.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
 

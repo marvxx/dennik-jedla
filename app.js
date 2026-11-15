@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.5';
+  const APP_VERSION = '2.6';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -177,7 +177,7 @@
     return {
       type: type || null, ts: Date.now(), tsTouched: false, desc: '', severity: null, duration: '',
       stool: null, stress: null, mood: null, note: '', portion: null, rushed: false,
-      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false, tsOff: 0, tsCustom: false, tagsAll: false,
+      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false, tsOff: 0, tsCustom: false, tagsAll: false, amount: '', product: null,
     };
   }
 
@@ -254,6 +254,7 @@
       <div id="scrim"></div>
       <div class="sheet tall" id="entry-sheet" role="dialog" aria-label="Záznam"><form id="entry-form" autocomplete="off" novalidate></form></div>
       <div class="sheet tall" id="trace-dialog" role="dialog" aria-label="Čo predchádzalo"></div>
+      <div class="sheet tall" id="scan-sheet" role="dialog" aria-label="Skenovať výrobok"></div>
       <div class="sheet" id="mini-sheet" role="dialog"></div>
       <div class="sheet tall" id="report-sheet" role="dialog" aria-label="Prehľad pre lekára"></div>
       <div id="toast" role="status" aria-live="polite"></div>
@@ -272,6 +273,7 @@
     openSheets = openSheets.filter(x => x !== id);
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     if (id === 'mini-sheet' && currentView === 'settings') renderSettings();
+    if (id === 'scan-sheet' && window.Scan) Scan.stop();
     syncScrim();
   }
   function syncScrim() {
@@ -574,7 +576,98 @@
       q.map(t => `<button type="button" class="chip" data-q="${esc(t)}">${esc(t)}</button>`).join('');
     const quick = chipsHtml ? `<div class="chips quick scroll">${chipsHtml}</div>` : '';
     const star = isFood ? `<button type="button" class="star${isFav(draft.desc) ? ' on' : ''}" id="fav-btn" data-act="fav" aria-label="Uložiť medzi obľúbené">${favBtnText()}</button>` : '';
-    return grp('', `<div class="desc-row"><input type="text" id="f-desc" class="big" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${star}</div>${quick}`);
+    return grp('', `<div class="desc-row"><input type="text" id="f-desc" class="big" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${isFood ? `<button type="button" class="star" data-act="scan" aria-label="Skenovať čiarový kód">${ic('scan')}</button>` : ''}${star}</div>${quick}`);
+  }
+
+  // ---------- Skenovanie balených výrobkov ----------
+  const products = () => meta.products || {};
+
+  function productHtml() {
+    const p = draft.product;
+    if (!p) return '';
+    const al = (p.allergens || []).concat((p.traces || []).map(x => 'stopy: ' + x));
+    return `<section class="grp prod"><div class="prod-top"><span class="tbadge food">${ic('scan')}</span>
+        <span><b>${esc(p.name || 'Naskenovaný výrobok')}</b><small>${esc([p.brand, p.quantity, p.code].filter(Boolean).join(' · '))}</small></span>
+        <button type="button" class="x" data-act="prod-clear" aria-label="Odpojiť výrobok">✕</button></div>
+      ${al.length ? '<span class="pills">' + al.map(x => `<span class="pill">${esc(x)}</span>`).join('') + '</span>' : ''}
+      ${p.ingredients ? `<details class="more" style="margin:8px 0 0"><summary>Zloženie z obalu</summary><p class="small muted" style="margin:0">${esc(p.ingredients)}</p></details>`
+        : '<p class="tiny" style="margin:8px 0 0">Zloženie v databáze nie je. Skupiny v časti Obsahovalo doplň ručne.</p>'}</section>`;
+  }
+
+  function scanBody(msg, retry) {
+    return `<div class="sheet-head"><h2>Skenovať výrobok</h2><button type="button" class="x" data-act="scan-close" aria-label="Zavrieť">✕</button></div>
+      <div class="scanbox" id="scan-box"></div>
+      <p class="small" id="scan-msg" style="text-align:center;margin:10px 0 14px">${msg}</p>
+      ${retry ? '<button type="button" class="btn block" data-act="scan-retry" style="margin-bottom:12px">Skenovať znova</button>' : ''}` +
+      grp('Nejde to?', `<div class="desc-row"><input type="text" id="scan-code" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="číslo pod čiarovým kódom">
+          <button type="button" class="btn small primary" data-act="scan-manual">Hľadať</button></div>
+        <label class="btn small" style="margin-top:10px">Odfotiť kód<input type="file" id="scan-photo" accept="image/*" capture="environment" hidden></label>`);
+  }
+
+  function scanStart() {
+    if (!window.Scan) { $('#scan-msg').textContent = 'Skener sa nenačítal. Zadaj číslo ručne.'; return; }
+    Scan.start($('#scan-box'), {
+      onCode: handleCode,
+      onError: m => { const el = $('#scan-msg'); if (el) el.textContent = m; },
+    });
+  }
+
+  function openScan() {
+    $('#scan-sheet').innerHTML = scanBody('Namier kameru na čiarový kód a chvíľu ju drž pokojne.');
+    openSheet('scan-sheet');
+    scanStart();
+  }
+
+  function scanFail(msg) {
+    if (!openSheets.includes('scan-sheet')) return;
+    $('#scan-sheet').innerHTML = scanBody(esc(msg), true);
+  }
+
+  async function handleCode(code) {
+    const msg = $('#scan-msg');
+    if (msg) msg.textContent = 'Hľadám výrobok ' + code + '…';
+    const known = products()[code];
+    if (known) { applyProduct(known, true); return; }
+    const r = window.Scan ? await Scan.lookup(code) : { status: 'error', reason: 'network' };
+    if (!openSheets.includes('scan-sheet')) return;   // medzitým zavreté
+    if (r.status === 'found') { applyProduct(r.product, false); return; }
+    if (r.status === 'notfound') {
+      draft.product = { code };
+      if (!draft.place) draft.place = 'kupovane';
+      closeSheet('scan-sheet');
+      renderForm();
+      toast('Výrobok v databáze nie je. Napíš názov, nabudúce ho už spoznám.');
+      const inp = $('#f-desc');
+      if (inp) inp.focus();
+      return;
+    }
+    scanFail(r.reason === 'offline' ? 'Si bez internetu a tento výrobok ešte nepoznám. Zapíš ho ručne.'
+      : r.reason === 'timeout' ? 'Databáza neodpovedá. Skús to o chvíľu znova.'
+        : 'Výrobok sa nepodarilo vyhľadať. Skús to znova.');
+  }
+
+  function applyProduct(p, fromCache) {
+    const name = (p.desc || [p.brand, p.name].filter((x, i, a) => x && !(i === 0 && a[1] && a[1].toLowerCase().includes(x.toLowerCase()))).join(' ')).trim();
+    if (name) draft.desc = name;
+    const tags = new Set(draft.tags);
+    (p.tags || []).forEach(t => { if (TAGS.some(x => x[0] === t)) tags.add(t); });
+    draft.tags = [...tags];
+    draft.noTags = draft.noTags.filter(t => !tags.has(t));
+    draft.product = { code: p.code, name: p.name || '', brand: p.brand || '', quantity: p.quantity || '',
+      ingredients: p.ingredients || '', allergens: p.allergens || [], traces: p.traces || [] };
+    if (!draft.place) draft.place = 'kupovane';
+    closeSheet('scan-sheet');
+    renderForm();
+    toast(fromCache ? 'Známy výrobok, vyplnené' : 'Výrobok nájdený, vyplnené');
+  }
+
+  // Po uložení si výrobok zapamätáme aj s názvom a skupinami, ako ich používateľka nechala
+  async function rememberProduct(e) {
+    const p = e.product;
+    if (!p || !p.code) return;
+    const all = Object.assign({}, products());
+    all[p.code] = Object.assign({}, p, { desc: e.desc, tags: e.tags || [] });
+    await setMeta('products', all);
   }
 
   function isFav(desc) { const d = desc.trim().toLowerCase(); return !!d && favorites().some(f => f.desc.toLowerCase() === d); }
@@ -636,6 +729,7 @@
       draft.tags = [...tags];
       draft.noTags = append ? draft.noTags.concat(src.noTags || []) : (src.noTags || []).slice();
       if (src.place && (!append || !draft.place)) { draft.place = src.place; const g = $('.chips[data-field="place"]'); if (g) refreshGroup(g, draft.place); const dt = $('#ctx-more'); if (dt) dt.open = true; }
+      if (src.product && !append) draft.product = src.product;
       if (src.portion && !append) { draft.portion = src.portion; const g = $('.chips[data-field="portion"]'); if (g) refreshGroup(g, draft.portion); }
     }
     const inp = $('#f-desc');
@@ -703,9 +797,12 @@
 
     if (t === 'food') {
       h += descField('Čo si jedla alebo pila?');
+      h += productHtml();
       h += `<div id="risk-warn">${riskWarnHtml()}</div>`;
       h += timeField();
-      h += grp('Porcia', chipGroup('portion', PORTION, { cls: 'seg' }));
+      h += grp('Koľko?', chipGroup('portion', PORTION, { cls: 'seg' }) +
+        `<input type="text" id="f-amount" style="margin-top:10px" value="${esc(draft.amount)}" placeholder="presnejšie, napr. pol balenia, 5 ks" enterkeyhint="done">` +
+        (draft.product && draft.product.quantity ? `<p class="tiny" style="margin:6px 0 0">Celé balenie: ${esc(draft.product.quantity)}</p>` : ''));
       h += grp('Obsahovalo', tagChips() + '<p class="tiny" style="margin:8px 0 0">✦ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>');
       h += grp('', sw('f-enzyme', 'Užila som laktázu / enzým', draft.enzyme) + sw('f-rushed', 'Jedla som v zhone', draft.rushed));
       h += grp('Kde?', chipGroup('place', PLACES, {}));
@@ -771,6 +868,7 @@
     };
     if (type === 'food') Object.assign(e, {
       portion: d.portion, rushed: !!d.rushed, tags: effectiveTags(), noTags: d.noTags.slice(),
+      amount: (d.amount || '').trim(), product: d.product || null,
       place: d.place, enzyme: !!d.enzyme,
     });
     if (type === 'symptom') Object.assign(e, { severity: d.severity, duration: d.duration.trim(), kinds: d.kinds.slice(), location: d.location });
@@ -785,6 +883,7 @@
     }
     if (old) entries[entries.indexOf(old)] = e; else entries.push(e);
     if (!meta.firstUse) await setMeta('firstUse', Date.now());
+    if (type === 'food') await rememberProduct(e);
     // ťažkosti v deň označený „bez ťažkostí“ → zrušiť označenie
     const dd = days[dateStr(e.ts)];
     if (type === 'symptom' && dd && dd.noSymptoms) { delete dd.noSymptoms; await DB.put('days', dd); }
@@ -837,6 +936,8 @@
     draft.noTags = draft.noTags || [];
     draft.kinds = draft.kinds || [];
     draft.enzyme = !!draft.enzyme;
+    draft.amount = draft.amount || '';
+    draft.product = draft.product || null;
     renderForm();
     openSheet('entry-sheet');
   }
@@ -874,6 +975,7 @@
       const risk = riskTags();
       Analysis.mealTags(e).forEach(t => { const x = TAGS.find(y => y[0] === t); if (x) p.push([x[2], risk.includes(t) ? 'risk' : '']); });
       if (e.enzyme) p.push(['enzým']);
+      if (e.amount) p.push([e.amount]);
       if (e.rushed) p.push(['v zhone']);
     }
     if (e.type === 'symptom') {
@@ -1420,7 +1522,7 @@
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
     const settings = {};
-    ['customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
     const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
@@ -1439,7 +1541,7 @@
   function buildCsv() {
     const head = ['Dátum', 'Čas', 'Typ', 'Popis', 'Sila', 'Trvanie', 'Stolica', 'Stres', 'Poznámka',
       'Nálada', 'Porcia', 'V zhone', 'Obsahovalo', 'Druh ťažkostí', 'Miesto', 'Spánok', 'Menštruácia', 'Pohyb', 'Pitie',
-      'Kde jedla', 'Enzým', 'Deň bez ťažkostí'];
+      'Kde jedla', 'Enzým', 'Deň bez ťažkostí', 'Množstvo', 'Čiarový kód'];
     const rows = [head];
     [...entries].sort((a, b) => a.ts - b.ts).forEach(e => {
       const d = new Date(e.ts);
@@ -1455,7 +1557,7 @@
         day.sleep ? lab(SLEEP, day.sleep) : '', day.period != null ? (day.period ? 'áno' : 'nie') : '',
         day.activity ? lab(ACTIVITY, day.activity) : '', day.water ? lab(WATER, day.water) : '',
         e.place ? lab(PLACES, e.place) : '', e.type === 'food' ? (e.enzyme ? 'áno' : 'nie') : '',
-        day.noSymptoms ? 'áno' : '',
+        day.noSymptoms ? 'áno' : '', e.amount || '', e.product && e.product.code ? e.product.code : '',
       ]);
     });
     return '﻿' + rows.map(r => r.map(csvCell).join(';')).join('\r\n');
@@ -1476,7 +1578,7 @@
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
     if (data.settings && typeof data.settings === 'object') {
-      for (const k of ['customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test']) {
+      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test']) {
         if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
       }
     }
@@ -1521,12 +1623,12 @@
         ${srow('csv', 'table', 'stool', 'Všetky záznamy do tabuľky', 'Súbor CSV pre Excel alebo Numbers')}
       </div>
       <h2 class="sub">Ostatné</h2><div class="dayrows">
-        ${srow('scan-test', 'scan', 'accent', 'Skúška skenera', 'Test čítania čiarových kódov')}
         ${srow('rem-open', 'bell', 'sun', 'Večerná pripomienka', 'Udalosť do Kalendára v iPhone')}
         ${standalone ? '' : srow('install', 'phone', 'med', 'Pridať na plochu', 'Aby sa denník otváral ako aplikácia')}
         ${srow('wipe', 'trash', 'danger', 'Vymazať všetky údaje', entries.length + ' záznamov, ' + Object.keys(days).length + ' dní s údajmi', '', true)}
       </div>
-      <p class="foot" style="text-align:center">Denník jedla ${APP_VERSION} · funguje aj bez internetu · nič sa neodosiela</p>`;
+      <p class="foot" style="text-align:center">Denník jedla ${APP_VERSION} · funguje aj bez internetu</p>
+      <p class="foot" style="text-align:center">Záznamy ostávajú len v telefóne. Pri skenovaní sa do databázy Open Food Facts pošle iba číslo čiarového kódu.</p>`;
   }
 
   function openInfo(kind) {
@@ -1841,6 +1943,17 @@
         break;
       }
       case 'report': openReport(); break;
+      case 'scan': openScan(); break;
+      case 'scan-close': closeSheet('scan-sheet'); break;
+      case 'scan-retry': $('#scan-sheet').innerHTML = scanBody('Namier kameru na čiarový kód a chvíľu ju drž pokojne.'); scanStart(); break;
+      case 'scan-manual': {
+        const c = ($('#scan-code').value || '').replace(/\s+/g, '');
+        if (!window.Scan || !Scan.validCode(c)) { toast('Číslo nesedí. Skontroluj, či nie je preklep.'); break; }
+        Scan.stop();
+        handleCode(c);
+        break;
+      }
+      case 'prod-clear': draft.product = null; renderForm(); break;
       case 'report-close': closeSheet('report-sheet'); break;
       case 'report-print': window.print(); break;
       case 'report-share': shareReport(); break;
@@ -1852,6 +1965,7 @@
     const t = ev.target;
     if (t.id === 'f-desc') { draft.desc = t.value; t.classList.remove('invalid'); refreshFoodExtras(); }
     else if (t.id === 'f-note') draft.note = t.value;
+    else if (t.id === 'f-amount') draft.amount = t.value;
     else if (t.id === 'q') { searchQ = t.value; renderSearch(); }
     else if (t.id === 'f-duration') {
       draft.duration = t.value;
@@ -1879,6 +1993,15 @@
       await setMeta('toH', to);
       await setMeta('minN', Number($('#o-min').value));
       renderInsights();
+    } else if (t.id === 'scan-photo' && t.files && t.files[0]) {
+      const file = t.files[0];
+      t.value = '';
+      if (!window.Scan) return;
+      Scan.stop();
+      const m = $('#scan-msg');
+      if (m) m.textContent = 'Čítam fotku…';
+      const c = await Scan.decodePhoto(file);
+      if (c) handleCode(c); else scanFail('Kód sa z fotky nepodarilo prečítať. Skús to zblízka a rovno, alebo zadaj číslo.');
     } else if (t.id === 'import-file' && t.files && t.files[0]) {
       await doImport(t.files[0]);
       t.value = '';
