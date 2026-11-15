@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.3';
+  const APP_VERSION = '2.4';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -248,6 +248,8 @@
         <button type="button" class="fab" data-act="add" aria-label="Nový záznam"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
         ${tab('insights', 'Súvislosti')}${tab('settings', 'Nastavenia')}
       </nav>
+      <div id="navbar" aria-hidden="true"><span></span></div>
+      <div id="done" aria-hidden="true"><span>${ic('check')}</span></div>
       <div id="scrim"></div>
       <div class="sheet tall" id="entry-sheet" role="dialog" aria-label="Záznam"><form id="entry-form" autocomplete="off" novalidate></form></div>
       <div class="sheet tall" id="trace-dialog" role="dialog" aria-label="Čo predchádzalo"></div>
@@ -282,6 +284,26 @@
     if (v === 'list') renderList();
     if (v === 'insights') renderInsights();
     if (v === 'settings') renderSettings();
+    syncNavbar();
+  }
+
+  // Pri posúvaní sa veľký nadpis schová a hore ostane úzka lišta s názvom
+  function syncNavbar() {
+    const bar = document.getElementById('navbar');
+    if (!bar) return;
+    const h1 = $('.view.active .lt h1');
+    bar.firstElementChild.textContent = h1 ? h1.textContent : '';
+    bar.classList.toggle('show', window.scrollY > 46);
+  }
+
+  let doneTimer;
+  function showDone() {
+    const d = document.getElementById('done');
+    d.classList.remove('show');
+    void d.offsetWidth;   // znovu spustí animáciu
+    d.classList.add('show');
+    clearTimeout(doneTimer);
+    doneTimer = setTimeout(() => d.classList.remove('show'), 1100);
   }
 
   function switchView(v) {
@@ -295,7 +317,7 @@
   function goDay(d) {
     selDay = d;
     followToday = d === todayStr();
-    if (currentView === 'today') renderToday(); else switchView('today');
+    if (currentView === 'today') { renderToday(); syncNavbar(); } else switchView('today');
   }
 
   // ---------- Čipy (tlačidlá na výber) ----------
@@ -454,7 +476,7 @@
     const ticks = hours.map(h => `<span style="left:${x(h * 60)}%">${h}:00</span>`).join('');
     return `<div class="card ribbon-card"><h3>${esc(daySummary(list, d, true))}</h3>
       <div class="ribbon" aria-hidden="true">${marks}</div><div class="rb-ticks" aria-hidden="true">${ticks}</div>
-      <div class="rb-legend"><span><i></i>jedlo</span><span><i class="s"></i>ťažkosti (väčší kruh = silnejšie)</span>${isToday ? '<span><i class="n"></i>teraz</span>' : ''}</div>${riskLineHtml(list)}</div>`;
+      ${dayIndex().has.size > 4 ? '' : `<div class="rb-legend"><span><i></i>jedlo</span><span><i class="s"></i>ťažkosti (väčší kruh = silnejšie)</span>${isToday ? '<span><i class="n"></i>teraz</span>' : ''}</div>`}${riskLineHtml(list)}</div>`;
   }
 
   function riskLineHtml(list) {
@@ -771,9 +793,11 @@
     draft = newDraft();
     closeSheet('entry-sheet');
     flashId = e.id;
-    toast(wasEditing ? 'Zmeny uložené ✓' : 'Uložené ✓');
+    showDone();
     if (currentView === 'today') { selDay = dateStr(e.ts); followToday = selDay === todayStr(); }
     render();
+    const fresh = $('.entry.flash');
+    if (fresh) fresh.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   function openEntry() {
@@ -1865,6 +1889,8 @@
     }
     if (ev.key === 'Escape' && openSheets.length) $('#scrim').click();
   });
+
+  window.addEventListener('scroll', syncNavbar, { passive: true });
 
   $('#entry-form').addEventListener('submit', ev => { ev.preventDefault(); saveDraft(); });
 
