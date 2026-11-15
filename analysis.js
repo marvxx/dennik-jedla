@@ -74,6 +74,23 @@
     surova: ['salat', 'surov', 'uhork', 'redkovk', 'kapust', 'brokolic', 'karfiol', 'kel'],
   };
 
+  // Vlastné intolerancie používateľa: [{id: 'c_…', words: ['paradajk']}]
+  function setCustomTags(list) {
+    for (const k of Object.keys(TAG_WORDS)) if (k.startsWith('c_')) delete TAG_WORDS[k];
+    for (const c of list || []) if (c && c.id && c.words && c.words.length) TAG_WORDS[c.id] = c.words.slice();
+  }
+  // Z názvu („paradajky, paprika“) urobí začiatky slov na rozpoznávanie
+  function wordsFor(label) {
+    const out = [];
+    for (const w of String(label || '').toLowerCase().split(/[^\p{L}]+/u)) {
+      const n = norm(w);
+      if (n.length < 3 || STOP.has(n)) continue;
+      const k = stem(n);
+      if (!out.includes(k)) out.push(k);
+    }
+    return out;
+  }
+
   function detectTags(desc) {
     const found = new Set();
     for (const w of String(desc || '').toLowerCase().split(/[^\p{L}]+/u)) {
@@ -95,7 +112,8 @@
   function mealTags(e) {
     const s = new Set((e.tags || []).concat(detectTags(e.desc)));
     (e.noTags || []).forEach(t => s.delete(t));
-    return [...s];
+    // zmazaná vlastná skupina sa už neráta
+    return [...s].filter(t => !t.startsWith('c_') || TAG_WORDS[t]);
   }
 
   function localDate(ts) {
@@ -343,7 +361,7 @@
     return { worst: worst.map(d => ({ date: d, sev: sev[d] })), best, onlyWorst: only(W, B), onlyBest: only(B, W), both };
   }
 
-  const api = { analyze, bestWorst, tokenize, stem, norm, localDate, detectTags, mealTags };
+  const api = { analyze, bestWorst, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -268,7 +268,7 @@ textarea { min-height: 84px; resize: vertical; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .invalid { border-color: var(--danger) !important; }
 
-.time-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.time-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .time-row .chip { padding: 8px 2px; font-size: 14px; text-align: center; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -415,7 +415,6 @@ details.more[open] > summary::before { content: "－ "; }
 @media (max-width: 360px) {
   .today .row { grid-template-columns: 1fr; gap: 4px; }
   .opts { grid-template-columns: 1fr 1fr; }
-  .time-row { grid-template-columns: repeat(3, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -516,3 +515,21 @@ input[type="search"]:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
   .report h3 { color: #000; }
 }
 .grp .time-row .chip { font-size: 13px; white-space: nowrap; letter-spacing: -.02em; padding: 8px 0; }
+
+/* ---------- 2.2: dátum a čas zvlášť ---------- */
+.dt-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.dt-row label { display: block; min-width: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.dt-row input {
+  display: block; width: 100%; min-width: 0; min-height: 48px; margin-top: 4px; border: 1.5px solid transparent; border-radius: 14px;
+  background: var(--bg); padding: 10px 12px; font: 600 17px var(--round); color: var(--ink); outline: none;
+  -webkit-appearance: none; appearance: none; text-align: left;
+}
+.dt-row input::-webkit-date-and-time-value { text-align: left; }
+.dt-row input:focus { border-color: var(--accent); }
+.grp .time-row .chip { font-size: 14px; }
+
+/* ---------- 2.2: výber intolerancií v paneli ---------- */
+.chips.pick .chip { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chips.pick .chip::after { content: ""; width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; border: 2px solid var(--line); }
+.chips.pick .chip.on { background: var(--sym-soft); color: var(--ink); }
+.chips.pick .chip.on::after { content: "✓"; border-color: var(--sym); background: var(--sym); color: #fff; font-size: 15px; font-weight: 800; display: grid; place-items: center; }

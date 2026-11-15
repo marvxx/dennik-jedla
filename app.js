@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.1';
+  const APP_VERSION = '2.2';
   const DAY = 864e5;
 
   // ---------- Číselníky ----------
@@ -180,6 +180,20 @@
     d.forEach(x => { days[x.date] = x; });
     meta = {};
     m.forEach(x => { meta[x.key] = x.value; });
+    syncCustomTags();
+  }
+
+  // Vlastné intolerancie sa správajú ako ostatné skupiny: rozpoznanie z popisu, štítky, výpočty
+  const customTags = () => meta.customTags || [];
+  function syncCustomTags() {
+    for (let i = TAGS.length - 1; i >= 0; i--) if (TAGS[i][0].startsWith('c_')) TAGS.splice(i, 1);
+    customTags().forEach(c => {
+      TAGS.push([c.id, '🔸', c.label]);
+      CTX_LABELS['tag:' + c.id] = '🔸 ' + c.label;
+      CTX_LABELS['stack:' + c.id] = '🔸 ' + c.label;
+      CTX_LABELS['load:' + c.id] = '🔸 ' + c.label + ' – 2 a viac porcií za deň';
+    });
+    if (Analysis.setCustomTags) Analysis.setCustomTags(customTags());
   }
 
   // ---------- Prepínanie obrazoviek ----------
@@ -232,6 +246,7 @@
     document.getElementById(id).classList.remove('open');
     openSheets = openSheets.filter(x => x !== id);
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    if (id === 'mini-sheet' && currentView === 'settings') renderSettings();
     syncScrim();
   }
   function syncScrim() {
@@ -589,9 +604,17 @@
     if (!draft.tsTouched && !editingId) draft.ts = Date.now();
     const custom = !!(editingId || draft.tsCustom);
     const chip = (m, l) => `<button type="button" class="chip${!custom && draft.tsOff === m ? ' on' : ''}" data-time="${m}">${l}</button>`;
-    return grp('Kedy?', `<div class="time-row">${chip(0, 'teraz')}${chip(30, '−30 min')}${chip(60, '−1 h')}${chip(120, '−2 h')}
-        <button type="button" class="chip${custom ? ' on' : ''}" data-act="time-custom">iný čas</button></div>
-      <input type="datetime-local" id="f-ts" value="${toLocalInput(draft.ts)}"${custom ? '' : ' hidden'}>`);
+    return grp('Kedy?', `<div class="time-row">${chip(0, 'teraz')}${chip(30, '−30 min')}${chip(60, '−1 h')}${chip(120, '−2 h')}</div>
+      <div class="dt-row">
+        <label>Iný dátum<input type="date" id="f-date" value="${dateStr(draft.ts)}" max="${todayStr()}"></label>
+        <label>Iný čas<input type="time" id="f-time" value="${fmtTime(draft.ts)}"></label>
+      </div>`);
+  }
+
+  function setTimeInputs() {
+    const d = $('#f-date'), t = $('#f-time');
+    if (d) d.value = dateStr(draft.ts);
+    if (t) t.value = fmtTime(draft.ts);
   }
 
   function moreBlock() {
@@ -680,7 +703,7 @@
     } else if (d.type === 'stool') {
       if (!desc && !d.stool) return [null, 'Vyber typ stolice'];
     }
-    if (!d.ts || isNaN(d.ts)) return ['f-ts', 'Skontroluj dátum a čas'];
+    if (!d.ts || isNaN(d.ts)) return ['f-time', 'Skontroluj dátum a čas'];
     return null;
   }
 
@@ -1329,7 +1352,7 @@
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
     const settings = {};
-    ['intol', 'favorites', 'fromH', 'toH', 'minN'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    ['customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
     const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
@@ -1385,7 +1408,7 @@
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
     if (data.settings && typeof data.settings === 'object') {
-      for (const k of ['intol', 'favorites', 'fromH', 'toH', 'minN']) {
+      for (const k of ['customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test']) {
         if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
       }
     }
@@ -1412,8 +1435,10 @@
     const favs = favorites();
     el.innerHTML = `<header class="lt"><div><h1>Nastavenia</h1></div></header>
       <div class="card"><h2>⚠️ Moje intolerancie</h2>
-        <p class="small muted" style="margin-top:0">Označ, čo ti vadí. Aplikácia ťa upozorní pri zápise a vyhodnotí, kedy ti to vadí viac.</p>
-        <div class="chips">${TAGS.map(([v, e, t]) => `<button type="button" class="chip${riskTags().includes(v) ? ' on' : ''}" data-intol="${v}">${e} ${esc(t)}</button>`).join('')}</div>
+        ${riskTags().length
+          ? '<div class="pending" style="margin-bottom:12px">' + TAGS.filter(([v]) => riskTags().includes(v)).map(([v, e, t]) => `<span class="risk">${e} ${esc(t)}</span>`).join('') + '</div>'
+          : '<p class="small muted" style="margin-top:0">Zatiaľ nič vybrané. Keď označíš, čo ti vadí, aplikácia ťa upozorní pri zápise a vyhodnotí, kedy ti to vadí viac.</p>'}
+        <button type="button" class="btn small" data-act="intol-edit">${riskTags().length ? 'Upraviť výber' : 'Vybrať'}</button>
       </div>
       <div class="card"><h2>⭐ Obľúbené jedlá</h2>
         ${favs.length ? '<div class="fav-list">' + favs.map((f, i) => `<div class="fav-row"><span>${esc(f.desc)}</span>
@@ -1445,6 +1470,19 @@
         <p class="small muted" style="margin-top:0">${entries.length} záznamov · ${Object.keys(days).length} dní s údajmi o dni</p>
         <button type="button" class="btn danger block" data-act="wipe">Vymazať všetky údaje</button></div>
       <p class="tiny" style="text-align:center">Denník jedla ${APP_VERSION} · funguje aj bez internetu · nič sa neodosiela</p>`;
+  }
+
+  function openIntol() {
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Čo ti vadí?</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
+      grp('', '<div class="chips col pick">' + TAGS.map(([v, e, t]) =>
+        `<button type="button" class="chip${riskTags().includes(v) ? ' on' : ''}" data-intol="${v}">${e} ${esc(t)}</button>`).join('') + '</div>') +
+      grp('Iné, čo v zozname nie je', `<div class="desc-row"><input type="text" id="ct-text" placeholder="napr. paradajky" enterkeyhint="done">
+          <button type="button" class="btn small primary" data-act="ct-add">Pridať</button></div>
+        <p class="tiny" style="margin:8px 0 0">Aplikácia to slovo odteraz hľadá v popise jedla (aj v starších záznamoch) a ráta s ním vo vyhodnotení rovnako ako s ostatnými.</p>
+        ${customTags().length ? '<div class="fav-list" style="margin-top:10px">' + customTags().map(c => `<div class="fav-row"><span>🔸 ${esc(c.label)}</span>
+          <button type="button" class="btn ghost small" data-act="ct-del" data-id="${c.id}" aria-label="Zmazať">✕</button></div>`).join('') + '</div>' : ''}`) +
+      `<div class="savebar"><button type="button" class="btn primary" data-act="mini-close">Hotovo</button></div>`;
+    if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
   }
 
   // ---------- Udalosti ----------
@@ -1574,9 +1612,7 @@
       draft.tsCustom = false;
       draft.tsTouched = m !== 0;
       $$('.time-row .chip').forEach(c => c.classList.toggle('on', c === tm));
-      const inp = $('#f-ts');
-      inp.value = toLocalInput(draft.ts);
-      inp.hidden = true;
+      setTimeInputs();
       return;
     }
 
@@ -1641,8 +1677,7 @@
       case 'time-custom': {
         draft.tsCustom = true;
         draft.tsTouched = true;
-        $$('.time-row .chip').forEach(c => c.classList.toggle('on', c === act));
-        $('#f-ts').hidden = false;
+        $$('.time-row .chip').forEach(c => c.classList.remove('on'));
         break;
       }
       case 'cal-prev': calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderList(); break;
@@ -1658,6 +1693,34 @@
       }
       case 'tags-all': draft.tagsAll = true; refreshFoodExtras(); break;
       case 'mini-close': closeSheet('mini-sheet'); break;
+      case 'intol-edit': openIntol(); break;
+      case 'ct-add': {
+        const label = $('#ct-text').value.trim();
+        const words = Analysis.wordsFor(label);
+        if (!words.length) { toast('Napíš názov suroviny (aspoň 3 písmená)'); break; }
+        if (TAGS.some(x => x[2].toLowerCase() === label.toLowerCase())) { toast('Toto už v zozname je'); break; }
+        const c = { id: 'c_' + Date.now().toString(36), label, words };
+        await setMeta('customTags', customTags().concat([c]));
+        await setMeta('intol', riskTags().concat([c.id]));
+        syncCustomTags();
+        const top = $('#mini-sheet').scrollTop;
+        openIntol();
+        $('#mini-sheet').scrollTop = top;
+        toast('Pridané ✓');
+        break;
+      }
+      case 'ct-del': {
+        if (!confirm('Zmazať túto vlastnú položku? Vo vyhodnotení sa prestane rátať.')) break;
+        const id = act.dataset.id;
+        await setMeta('customTags', customTags().filter(c => c.id !== id));
+        await setMeta('intol', riskTags().filter(t => t !== id));
+        if (meta.test && meta.test.tag === id) await setMeta('test', null);
+        syncCustomTags();
+        const top = $('#mini-sheet').scrollTop;
+        openIntol();
+        $('#mini-sheet').scrollTop = top;
+        break;
+      }
       case 'fnd-new': openFinding({}); break;
       case 'fnd-save': saveFinding(); break;
       case 'fnd-del': {
@@ -1712,9 +1775,14 @@
 
   document.addEventListener('change', async ev => {
     const t = ev.target;
-    if (t.id === 'f-ts') {
-      const v = new Date(t.value).getTime();
-      if (!isNaN(v)) { draft.ts = v; draft.tsTouched = true; t.classList.remove('invalid'); }
+    if (t.id === 'f-date' || t.id === 'f-time') {
+      // dátum a čas sú dve samostatné políčka; zmena jedného druhé nemení
+      const v = new Date($('#f-date').value + 'T' + $('#f-time').value).getTime();
+      if (!isNaN(v)) {
+        draft.ts = v; draft.tsTouched = true; draft.tsCustom = true;
+        $$('.time-row .chip').forEach(c => c.classList.remove('on'));
+        t.classList.remove('invalid');
+      }
     } else if (t.id === 'f-rushed') draft.rushed = t.checked;
     else if (t.id === 'f-enzyme') draft.enzyme = t.checked;
     else if (t.id === 'o-from' || t.id === 'o-to' || t.id === 'o-min') {
@@ -1746,8 +1814,7 @@
     if (openSheets.includes('entry-sheet')) {
       if (!draft.tsTouched && !editingId) {
         draft.ts = Date.now();
-        const inp = $('#f-ts');
-        if (inp) inp.value = toLocalInput(draft.ts);
+        setTimeInputs();
       }
       return;
     }
