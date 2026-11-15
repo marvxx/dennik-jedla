@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.4';
+  const APP_VERSION = '2.5';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -22,6 +22,7 @@
     bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.500 2h-15zM10 20.500h4"/>',
     phone: '<rect x="7" y="3" width="10" height="18" rx="2.500"/><path d="M11 18h2"/>',
     trash: '<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>',
+    scan: '<path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3M8 9v6M11 9v6M14 9v6M17 9v6"/>',
   };
   const ic = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
   const DAY = 864e5;
@@ -1520,6 +1521,7 @@
         ${srow('csv', 'table', 'stool', 'Všetky záznamy do tabuľky', 'Súbor CSV pre Excel alebo Numbers')}
       </div>
       <h2 class="sub">Ostatné</h2><div class="dayrows">
+        ${srow('scan-test', 'scan', 'accent', 'Skúška skenera', 'Test čítania čiarových kódov')}
         ${srow('rem-open', 'bell', 'sun', 'Večerná pripomienka', 'Udalosť do Kalendára v iPhone')}
         ${standalone ? '' : srow('install', 'phone', 'med', 'Pridať na plochu', 'Aby sa denník otváral ako aplikácia')}
         ${srow('wipe', 'trash', 'danger', 'Vymazať všetky údaje', entries.length + ' záznamov, ' + Object.keys(days).length + ' dní s údajmi', '', true)}
@@ -1776,6 +1778,7 @@
       case 'mini-close': closeSheet('mini-sheet'); break;
       case 'intol-edit': openIntol(); break;
       case 'favs': openInfo('favs'); break;
+      case 'scan-test': location.href = 'sken-test.html'; break;
       case 'rem-open': openInfo('rem'); break;
       case 'install': openInfo('install'); break;
       case 'ct-add': {

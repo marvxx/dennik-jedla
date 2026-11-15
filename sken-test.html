@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Test skenera</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .vwrap { position: relative; margin: 12px 0; border-radius: 14px; overflow: hidden; background: var(--surface-2); display: none; }
+  .vwrap.on { display: block; }
+  .vwrap video { width: 100%; display: block; max-height: 60vh; object-fit: cover; }
+  .vwrap canvas.drawingBuffer { display: none; }
+  .res-row { margin: 0 0 10px; }
+  .res-row b { display: block; font-size: 14px; color: var(--ink-3); font-weight: 600; }
+  .msg { margin: 10px 0 0; }
+  .row { display: flex; gap: 8px; }
+  .row .btn { flex: 0 0 auto; }
+  #diag { min-height: 200px; font: 13px/1.4 ui-monospace, Menlo, monospace; }
+  .gap { margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <p><a class="btn ghost" href="./">‹ Späť do denníka</a></p>
+  <header class="lt"><div><h1>Test skenera</h1><p>Skúsime, či telefón prečíta čiarový kód z obalu.</p></div></header>
+
+  <div class="card">
+    <h2>Skenovať kamerou</h2>
+    <p class="small muted">Namier zadnú kameru na čiarový kód a drž ju chvíľu pokojne.</p>
+    <div class="vwrap" id="vwrap"><video id="video" playsinline muted autoplay></video></div>
+    <button class="btn primary block" id="btnStart" type="button">Spustiť kameru</button>
+    <button class="btn block gap" id="btnStop" type="button" hidden>Zastaviť kameru</button>
+    <p class="small msg" id="camMsg"></p>
+  </div>
+
+  <div class="card">
+    <h2>Odfotiť kód</h2>
+    <p class="small muted">Ak kamera naživo nefunguje, odfoť čiarový kód zblízka a rovno.</p>
+    <input type="file" id="photo" accept="image/*" capture="environment">
+    <p class="small msg" id="photoMsg"></p>
+  </div>
+
+  <div class="card">
+    <h2>Zadať číslo ručne</h2>
+    <p class="small muted">Prepíš číslo pod čiarovým kódom (8, 12 alebo 13 číslic).</p>
+    <div class="row">
+      <input type="text" id="manual" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="napr. 3017620422003">
+      <button class="btn primary" id="btnManual" type="button">Hľadať</button>
+    </div>
+    <p class="small msg" id="manualMsg"></p>
+  </div>
+
+  <div class="card" id="resCard" hidden>
+    <h2>Výsledok</h2>
+    <div id="resBody"></div>
+  </div>
+
+  <div class="card">
+    <h2>Údaje pre Clauda</h2>
+    <p class="small muted">Po teste stlač „Skopírovať“ a pošli mi ten text.</p>
+    <textarea id="diag" readonly></textarea>
+    <button class="btn block gap" id="btnCopy" type="button">Skopírovať</button>
+    <p class="tiny msg" id="copyMsg"></p>
+  </div>
+</main>
+
+<script src="vendor/quagga.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var diag = $('diag');
+  var t0 = Date.now();
+
+  function log(s) {
+    try {
+      var d = new Date();
+      diag.value += (diag.value ? '\n' : '') + '[' + d.toTimeString().slice(0, 8) + '] ' + s;
+      diag.scrollTop = diag.scrollHeight;
+    } catch (e) {}
+  }
+  function errStr(e) { return e ? ((e.name || 'Error') + ': ' + (e.message || e)) : 'neznáma chyba'; }
+  window.addEventListener('error', function (ev) { log('UNCAUGHT: ' + ev.message + ' @' + ev.filename + ':' + ev.lineno); });
+  window.addEventListener('unhandledrejection', function (ev) { log('UNHANDLED REJECTION: ' + errStr(ev.reason)); });
+
+  // ---------- check digit ----------
+  function checkDigitOk(code) {
+    if (!/^\d+$/.test(code)) return false;
+    var n = code.length;
+    if (n !== 8 && n !== 12 && n !== 13) return false;
+    var sum = 0;
+    // from the right, skipping check digit: weights 3,1,3,1...
+    for (var i = 0; i < n - 1; i++) {
+      var d = code.charCodeAt(n - 2 - i) - 48;
+      sum += (i % 2 === 0) ? d * 3 : d;
+    }
+    return ((10 - (sum % 10)) % 10) === (code.charCodeAt(n - 1) - 48);
+  }
+  window.__checkDigitOk = checkDigitOk;
+
+  // ---------- environment diagnostics ----------
+  var standalone = !!(navigator.standalone) || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  log('Stránka: ' + location.href);
+  log('Domovská obrazovka (standalone): ' + standalone);
+  log('userAgent: ' + navigator.userAgent);
+  log("'BarcodeDetector' in window: " + ('BarcodeDetector' in window));
+  log('getUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+  log('isSecureContext: ' + window.isSecureContext);
+  log('Quagga načítaná: ' + (typeof Quagga !== 'undefined'));
+  var nativeOk = false;
+  var nativeReady = (async function () {
+    try {
+      if ('BarcodeDetector' in window) {
+        var f = await BarcodeDetector.getSupportedFormats();
+        log('BarcodeDetector formáty: ' + f.join(', '));
+        nativeOk = f.indexOf('ean_13') !== -1;
+      }
+    } catch (e) { log('BarcodeDetector getSupportedFormats chyba: ' + errStr(e)); }
+  })();
+
+  // ---------- state ----------
+  var stream = null, running = false, usingQuagga = false, rafId = 0, startTime = 0, camSessionId = 0;
+  var lastCode = '', lastCount = 0;
+
+  function say(id, txt) { $(id).textContent = txt || ''; }
+
+  function stopCamera(why) {
+    camSessionId++;
+    var was = running || !!stream;
+    running = false;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    if (usingQuagga) {
+      try { Quagga.offDetected(onQuaggaDetected); } catch (e) {}
+      try { Quagga.stop(); } catch (e) { log('Quagga.stop chyba: ' + errStr(e)); }
+      usingQuagga = false;
+    }
+    if (stream) {
+      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      stream = null;
+    }
+    var v = $('video');
+    try { v.pause(); v.srcObject = null; v.style.display = ''; } catch (e) {}
+    $('vwrap').classList.remove('on');
+    $('btnStop').hidden = true;
+    $('btnStart').hidden = false;
+    $('btnStart').disabled = false;
+    if (was) log('Kamera zastavená' + (why ? ' (' + why + ')' : ''));
+  }
+
+  function accepted(code, decoder) {
+    var ms = Date.now() - startTime;
+    log('Prečítaný kód: ' + code + ' | dekodér: ' + decoder + ' | čas do prečítania: ' + ms + ' ms');
+    stopCamera('kód prečítaný');
+    try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
+    say('camMsg', 'Prečítané: ' + code);
+    lookup(code);
+  }
+
+  function consider(code, decoder, needed) {
+    if (!running) return;
+    if (!checkDigitOk(code)) { return; }
+    if (code === lastCode) lastCount++; else { lastCode = code; lastCount = 1; }
+    if (lastCount >= needed) accepted(code, decoder);
+  }
+
+  function onQuaggaDetected(res) {
+    try {
+      var c = res && res.codeResult && res.codeResult.code;
+      if (c) consider(String(c), 'Quagga2', 3);
+    } catch (e) { log('Quagga detected chyba: ' + errStr(e)); }
+  }
+
+  async function startQuaggaLive(my) {
+    log('Dekodér: Quagga2 (živý prúd)');
+    $('vwrap').classList.add('on');
+    $('btnStop').hidden = false;
+    $('btnStart').hidden = true;
+    try {
+      await new Promise(function (resolve, reject) {
+        Quagga.init({
+          inputStream: {
+            type: 'LiveStream',
+            target: $('vwrap'),
+            constraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+          },
+          locator: { patchSize: 'medium', halfSample: true },
+          numOfWorkers: 0,
+          frequency: 10,
+          decoder: { readers: ['ean_reader', 'ean_8_reader', 'upc_reader', 'upc_e_reader'] },
+          locate: true
+        }, function (err) { err ? reject(err) : resolve(); });
+      });
+    } catch (e) {
+      log('Kamera ZLYHALA (Quagga.init): ' + errStr(e));
+      stopCamera('chyba');
+      say('camMsg', (e && e.name === 'NotAllowedError') ? 'Kamera nie je povolená. Povoľ ju v nastaveniach alebo skús „Odfotiť kód“.'
+        : (e && e.name === 'NotFoundError') ? 'Nenašla sa žiadna kamera.'
+        : 'Kameru sa nepodarilo spustiť. Skús „Odfotiť kód“.');
+      return;
+    }
+    if (my !== camSessionId) { try { Quagga.stop(); } catch (e) {} return; }
+    log('Kamera: OK (otvorila ju knižnica)');
+    usingQuagga = true;
+    running = true;
+    startTime = Date.now();
+    Quagga.onDetected(onQuaggaDetected);
+    Quagga.start();
+    say('camMsg', 'Hľadám kód…');
+    setTimeout(function () {
+      try { var qv = $('vwrap').querySelector('video'); if (qv && running) log('Rozlíšenie videa: ' + qv.videoWidth + 'x' + qv.videoHeight); } catch (e) {}
+    }, 1200);
+  }
+
+  async function startCamera() {
+    if (running) return;
+    var my = ++camSessionId;
+    say('camMsg', '');
+    $('btnStart').disabled = true;
+    lastCode = ''; lastCount = 0;
+    try {
+      await nativeReady;
+      if (typeof Quagga === 'undefined' && !nativeOk) throw new Error('Knižnica na čítanie kódov sa nenačítala.');
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+        log('Kamera: getUserMedia nie je dostupné');
+        say('camMsg', 'Tento prehliadač nedovoľuje používať kameru. Skús „Odfotiť kód“ nižšie.');
+        $('btnStart').disabled = false;
+        return;
+      }
+      startTime = Date.now();
+      // Bez natívneho čítania kódov otvorí kameru priamo knižnica (jedno povolenie, jedna kamera)
+      if (!nativeOk) { await startQuaggaLive(my); return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+      } catch (e) {
+        log('Kamera ZLYHALA: ' + errStr(e));
+        var m = (e && e.name === 'NotAllowedError') ? 'Kamera nie je povolená. Povoľ ju v nastaveniach alebo skús „Odfotiť kód“.'
+          : (e && e.name === 'NotFoundError') ? 'Nenašla sa žiadna kamera.'
+          : 'Kameru sa nepodarilo spustiť. Skús „Odfotiť kód“.';
+        say('camMsg', m);
+        $('btnStart').disabled = false;
+        return;
+      }
+      if (my !== camSessionId) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; return; }
+      log('Kamera: OK');
+      var vt = stream.getVideoTracks()[0];
+      try { log('Kamera stopa: ' + (vt.label || '?') + ' | nastavenia: ' + JSON.stringify(vt.getSettings())); } catch (e) {}
+      var v = $('video');
+      v.setAttribute('playsinline', ''); v.muted = true;
+      v.srcObject = stream;
+      $('vwrap').classList.add('on');
+      $('btnStop').hidden = false;
+      $('btnStart').hidden = true;
+      try { await v.play(); } catch (e) { log('video.play chyba: ' + errStr(e)); }
+      if (!v.videoWidth) {
+        await new Promise(function (res) { v.addEventListener('loadedmetadata', res, { once: true }); setTimeout(res, 2000); });
+      }
+      if (my !== camSessionId) return;
+      log('Rozlíšenie videa: ' + v.videoWidth + 'x' + v.videoHeight);
+      running = true;
+      startTime = Date.now();
+      say('camMsg', 'Hľadám kód…');
+
+      if (nativeOk) {
+        var det;
+        try {
+          det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+          log('Dekodér: natívny BarcodeDetector');
+        } catch (e) { log('BarcodeDetector konštruktor chyba: ' + errStr(e)); det = null; }
+        if (det) {
+          var busy = false, errCount = 0;
+          var tick = async function () {
+            if (!running || my !== camSessionId) return;
+            if (!busy && v.readyState >= 2) {
+              busy = true;
+              try {
+                var r = await det.detect(v);
+                if (r && r.length && my === camSessionId) {
+                  for (var i = 0; i < r.length; i++) {
+                    var c = String(r[i].rawValue || '');
+                    // UPC-A can be reported as 13 digits with leading 0; both validate
+                    if (checkDigitOk(c)) { consider(c, 'BarcodeDetector', 2); break; }
+                  }
+                }
+              } catch (e) {
+                if (errCount++ < 3) log('BarcodeDetector detect chyba: ' + errStr(e));
+              }
+              busy = false;
+            }
+            rafId = requestAnimationFrame(tick);
+          };
+          rafId = requestAnimationFrame(tick);
+          return;
+        }
+      }
+      // Quagga live stream on our existing stream (we own the tracks)
+      log('Dekodér: Quagga2 (živý prúd)');
+      await new Promise(function (resolve, reject) {
+        Quagga.init({
+          inputStream: {
+            type: 'LiveStream',
+            target: $('vwrap'),
+            constraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+          },
+          locator: { patchSize: 'medium', halfSample: true },
+          numOfWorkers: 0,
+          frequency: 10,
+          decoder: { readers: ['ean_reader', 'ean_8_reader', 'upc_reader', 'upc_e_reader'] },
+          locate: true
+        }, function (err) { err ? reject(err) : resolve(); });
+      });
+      if (my !== camSessionId) { try { Quagga.stop(); } catch (e) {} return; }
+      usingQuagga = true;
+      Quagga.onDetected(onQuaggaDetected);
+      Quagga.start();
+      // Quagga opened its own stream; release ours so the camera is not held twice
+      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      stream = null;
+      try { v.srcObject = null; v.style.display = 'none'; } catch (e) {}
+      try { var qv = $('vwrap').querySelector('video'); if (qv) { qv.setAttribute('playsinline', ''); qv.muted = true; log('Quagga video: ' + qv.videoWidth + 'x' + qv.videoHeight); } } catch (e) {}
+    } catch (e) {
+      log('Chyba pri spustení skenovania: ' + errStr(e));
+      stopCamera('chyba');
+      say('camMsg', 'Skenovanie sa nepodarilo spustiť. Skús „Odfotiť kód“.');
+    }
+  }
+
+  $('btnStart').addEventListener('click', function () { startCamera().catch(function (e) { log('startCamera: ' + errStr(e)); }); });
+  $('btnStop').addEventListener('click', function () { stopCamera('tlačidlo'); say('camMsg', 'Kamera je vypnutá.'); });
+  window.addEventListener('pagehide', function () { stopCamera('pagehide'); });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) stopCamera('stránka skrytá'); });
+
+  // ---------- photo ----------
+  function decodeOnce(src, size, patch) {
+    return new Promise(function (resolve) {
+      try {
+        Quagga.decodeSingle({
+          src: src, numOfWorkers: 0, inputStream: { size: size, singleChannel: false },
+          locator: { patchSize: patch, halfSample: true }, locate: true,
+          decoder: { readers: ['ean_reader', 'ean_8_reader', 'upc_reader', 'upc_e_reader'] }
+        }, function (res) {
+          resolve(res && res.codeResult ? String(res.codeResult.code) : null);
+        });
+      } catch (e) { log('decodeSingle výnimka: ' + errStr(e)); resolve(null); }
+    });
+  }
+  $('photo').addEventListener('change', async function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    var url = null;
+    try {
+      say('photoMsg', 'Čítam fotku…');
+      if (typeof Quagga === 'undefined') throw new Error('Quagga sa nenačítala');
+      log('Fotka: ' + file.type + ', ' + Math.round(file.size / 1024) + ' kB');
+      url = URL.createObjectURL(file);
+      var t = Date.now();
+      var attempts = [[800, 'medium'], [1280, 'medium'], [1280, 'large'], [800, 'small'], [1920, 'medium']];
+      var found = null;
+      for (var i = 0; i < attempts.length && !found; i++) {
+        var c = await decodeOnce(url, attempts[i][0], attempts[i][1]);
+        log('Fotka pokus ' + (i + 1) + ' (veľkosť ' + attempts[i][0] + ', patch ' + attempts[i][1] + '): ' + (c || 'nič'));
+        if (c && checkDigitOk(c)) found = c;
+      }
+      if (found) {
+        log('Prečítaný kód: ' + found + ' | dekodér: Quagga2 (fotka) | čas: ' + (Date.now() - t) + ' ms');
+        say('photoMsg', 'Prečítané: ' + found);
+        try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
+        lookup(found);
+      } else {
+        say('photoMsg', 'Kód sa nepodarilo prečítať. Skús to zblízka, rovno a pri dobrom svetle, alebo číslo zadaj ručne.');
+      }
+    } catch (e) {
+      log('Chyba pri fotke: ' + errStr(e));
+      say('photoMsg', 'Fotku sa nepodarilo spracovať.');
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      try { ev.target.value = ''; } catch (e) {}
+    }
+  });
+
+  // ---------- manual ----------
+  function manualGo() {
+    try {
+      var c = ($('manual').value || '').replace(/\s+/g, '');
+      if (!/^\d+$/.test(c)) { say('manualMsg', 'Napíš len číslice, bez medzier a písmen.'); return; }
+      if (c.length !== 8 && c.length !== 12 && c.length !== 13) { say('manualMsg', 'Číslo má mať 8, 12 alebo 13 číslic. Ty si napísal ' + c.length + '.'); return; }
+      if (!checkDigitOk(c)) { say('manualMsg', 'Posledná číslica nesedí, asi je niekde preklep. Skontroluj číslo.'); log('Ručné zadanie: zlý kontrolný znak ' + c); return; }
+      say('manualMsg', '');
+      log('Ručne zadaný kód: ' + c);
+      lookup(c);
+    } catch (e) { log('manualGo chyba: ' + errStr(e)); say('manualMsg', 'Niečo sa pokazilo.'); }
+  }
+  $('btnManual').addEventListener('click', manualGo);
+  $('manual').addEventListener('keydown', function (e) { if (e.key === 'Enter') manualGo(); });
+
+  // ---------- lookup ----------
+  var FIELDS = 'code,product_name,product_name_sk,product_name_cs,brands,quantity,serving_size,ingredients_text,ingredients_text_sk,ingredients_text_cs,ingredients_text_en,allergens_tags,traces_tags,additives_tags,lang';
+  var ALLERGENS = {
+    'en:milk': 'mlieko', 'en:gluten': 'lepok', 'en:eggs': 'vajcia', 'en:soybeans': 'sója', 'en:nuts': 'orechy',
+    'en:peanuts': 'arašidy', 'en:sesame-seeds': 'sezam', 'en:celery': 'zeler', 'en:mustard': 'horčica',
+    'en:fish': 'ryby', 'en:crustaceans': 'kôrovce', 'en:molluscs': 'mäkkýše', 'en:lupin': 'vlčí bôb',
+    'en:sulphur-dioxide-and-sulphites': 'siričitany'
+  };
+  function tagLabel(t) { return ALLERGENS[t] || String(t).replace(/^[a-z]{2}:/, ''); }
+
+  function clearEl(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function row(parent, label, value) {
+    var d = document.createElement('div'); d.className = 'res-row';
+    var b = document.createElement('b'); b.textContent = label;
+    var s = document.createElement('span'); s.textContent = value;
+    d.appendChild(b); d.appendChild(s); parent.appendChild(d);
+  }
+  function showMsg(txt) {
+    $('resCard').hidden = false;
+    var b = $('resBody'); clearEl(b);
+    var p = document.createElement('p'); p.className = 'small'; p.textContent = txt; b.appendChild(p);
+    $('resCard').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function pick(p, base, langs) {
+    for (var i = 0; i < langs.length; i++) {
+      var k = langs[i] ? base + '_' + langs[i] : base;
+      if (p[k] && String(p[k]).trim()) return { v: String(p[k]).trim(), l: langs[i] };
+    }
+    return null;
+  }
+  var LANGNAME = { sk: 'slovenčina', cs: 'čeština', en: 'angličtina', '': 'pôvodný jazyk produktu' };
+
+  function showProduct(code, p) {
+    $('resCard').hidden = false;
+    var b = $('resBody'); clearEl(b);
+    var h = document.createElement('h3');
+    var nm = pick(p, 'product_name', ['sk', 'cs', '']);
+    h.textContent = nm ? nm.v : 'Produkt bez názvu';
+    b.appendChild(h);
+    row(b, 'Kód', code);
+    row(b, 'Značka', p.brands || 'neuvedené');
+    row(b, 'Množstvo', p.quantity || 'neuvedené');
+    if (p.serving_size) row(b, 'Porcia', p.serving_size);
+    var ing = pick(p, 'ingredients_text', ['sk', 'cs', '', 'en']);
+    if (ing) {
+      var lang = ing.l === '' ? (p.lang ? 'pôvodný jazyk produktu: ' + p.lang : LANGNAME['']) : LANGNAME[ing.l];
+      row(b, 'Zloženie (' + lang + ')', ing.v);
+    } else row(b, 'Zloženie', 'V databáze nie je uvedené.');
+    var al = (p.allergens_tags || []).map(tagLabel);
+    row(b, 'Alergény', al.length ? al.join(', ') : 'žiadne neuvedené');
+    var tr = (p.traces_tags || []).map(tagLabel);
+    row(b, 'Môže obsahovať stopy', tr.length ? tr.join(', ') : 'žiadne neuvedené');
+    var ad = (p.additives_tags || []).map(function (t) { return String(t).replace(/^[a-z]{2}:/, '').toUpperCase(); });
+    row(b, 'Prídavné látky (E-čísla): ' + ad.length, ad.length ? ad.join(', ') : 'žiadne neuvedené');
+    $('resCard').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  var lookupId = 0;
+  async function lookup(code) {
+    var my = ++lookupId;
+    showMsg('Hľadám produkt v databáze…');
+    var ctrl = new AbortController();
+    var timedOut = false;
+    var timer = setTimeout(function () { timedOut = true; ctrl.abort(); }, 10000);
+    var t = Date.now();
+    try {
+      var r = await fetch('https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + FIELDS, { signal: ctrl.signal });
+      var data = null;
+      try { data = await r.json(); } catch (e) { log('Odpoveď nie je JSON: ' + errStr(e)); }
+      clearTimeout(timer);
+      if (my !== lookupId) return;
+      var found = !!(data && data.status === 1 && data.product);
+      log('Vyhľadávanie ' + code + ': HTTP ' + r.status + ', nájdený: ' + found + ', ' + (Date.now() - t) + ' ms');
+      if (found) {
+        var p = data.product;
+        log('Produkt: ' + (p.product_name || '?') + ' | zloženie sk/cs/en/generic: ' +
+          [!!p.ingredients_text_sk, !!p.ingredients_text_cs, !!p.ingredients_text_en, !!p.ingredients_text].join('/') +
+          ' | alergény: ' + (p.allergens_tags || []).join(',') + ' | aditíva: ' + (p.additives_tags || []).length);
+        showProduct(code, p);
+      } else if (r.ok || r.status === 404) {
+        showMsg('Tento kód som v databáze nenašiel (' + code + '). Produkt tam asi ešte nikto nepridal.');
+      } else {
+        showMsg('Databáza odpovedala chybou (' + r.status + '). Skús to neskôr.');
+      }
+    } catch (e) {
+      clearTimeout(timer);
+      if (my !== lookupId) return;
+      if (timedOut) { log('Vyhľadávanie ' + code + ': časový limit 10 s'); showMsg('Databáza neodpovedala do 10 sekúnd. Skontroluj pripojenie a skús znova.'); }
+      else { log('Vyhľadávanie ' + code + ' zlyhalo: ' + errStr(e)); showMsg('Nepodarilo sa spojiť s databázou. Skontroluj internet a skús znova.'); }
+    }
+  }
+
+  // ---------- copy ----------
+  $('btnCopy').addEventListener('click', async function () {
+    var ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(diag.value); ok = true; }
+    } catch (e) { log('clipboard chyba: ' + errStr(e)); }
+    if (!ok) {
+      try {
+        diag.removeAttribute('readonly'); diag.focus(); diag.select(); diag.setSelectionRange(0, diag.value.length);
+        ok = document.execCommand('copy');
+        diag.setAttribute('readonly', '');
+      } catch (e) { log('execCommand chyba: ' + errStr(e)); }
+    }
+    say('copyMsg', ok ? 'Skopírované.' : 'Nepodarilo sa skopírovať. Text je označený, podrž ho a vyber „Kopírovať“.');
+    if (!ok) { try { diag.select(); } catch (e) {} }
+  });
+})();
+</script>
+</body>
+</html>
