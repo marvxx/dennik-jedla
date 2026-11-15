@@ -182,7 +182,8 @@
 
     function bump(map, key, label, hit) {
       let s = map.get(key);
-      if (!s) { s = { withN: 0, withHit: 0, labels: new Map() }; map.set(key, s); }
+      if (!s) { s = { withN: 0, withHit: 0, labels: new Map(), idx: [] }; map.set(key, s); }
+      s.idx.push(info.length);   // poradie práve spracúvaného jedla
       s.withN++;
       if (hit) s.withHit++;
       s.labels.set(label, (s.labels.get(label) || 0) + 1);
@@ -195,7 +196,6 @@
       const hit = followed(m.ts);
       const tags = mealTags(m);
       const risk = riskTags ? tags.some(t => riskTags.includes(t)) : false;
-      info.push({ m, hit, tags, risk, day: days[localDate(m.ts)] || {} });
       totalN++;
       if (hit) totalHit++;
       for (const [k, w] of tokenize(m.desc)) bump(foodStats, k, w, hit);
@@ -213,16 +213,38 @@
       if (hr >= 20) bump(ctxStats, 'late', 'late', hit);
       if (sameDay && m.ts - prev >= 5 * HOUR) bump(ctxStats, 'gap:long', 'gap:long', hit);
       if (!sameDay && tags.includes('kava')) bump(ctxStats, 'first:kava', 'first:kava', hit);
+      info.push({ m, hit, tags, risk, day: days[localDate(m.ts)] || {} });
     }
 
-    function finish(map, group) {
+    const topOf = m => [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+    function finish(map, group, dropSigs) {
+      let items = [...map].map(([k, st]) => ({ k, st, sig: st.idx.join(','), label: topOf(st.labels)[0] }));
+      if (group === 'food') {
+        // Slová, ktoré sa vyskytli presne v tých istých jedlách, sú jeden výsledok (napr. „káva s mliekom“)
+        const bySig = new Map();
+        for (const it of items) { const g = bySig.get(it.sig); if (g) g.push(it); else bySig.set(it.sig, [it]); }
+        items = [...bySig.values()].map(g => {
+          const st = g[0].st;
+          const dm = new Map();
+          st.idx.forEach(i => { const d = String(info[i].m.desc || '').trim().toLowerCase(); dm.set(d, (dm.get(d) || 0) + 1); });
+          const [d0, n0] = topOf(dm);
+          const whole = n0 / st.idx.length >= 0.6 && d0.split(/\s+/).length <= 5 && tokenize(d0).length === g.length;
+          return { k: g.map(it => it.k).join('+'), st, sig: g[0].sig, label: whole ? d0 : g.map(it => it.label).join(' + ') };
+        });
+      } else if (dropSigs) {
+        // skupina, ktorá je to isté ako jedno jedlo, sa neukazuje druhýkrát
+        const tagSigs = new Set(items.filter(it => it.k.startsWith('tag:')).map(it => it.sig));
+        items = items.filter(it => !(it.k.startsWith('tag:') && dropSigs.has(it.sig)) && !(it.k === 'risk' && tagSigs.has(it.sig)));
+      }
       const ready = [], pending = [];
-      for (const [k, s] of map) {
-        const label = [...s.labels.entries()].sort((a, b) => b[1] - a[1])[0][0];
-        if (s.withN >= minN && totalN - s.withN >= 1) {
-          ready.push(summarize(k, label, s.withN, s.withHit, totalN, totalHit, group));
-        } else if (s.withN < minN) {
-          pending.push({ key: k, label, n: s.withN });
+      for (const it of items) {
+        const st = it.st;
+        if (st.withN >= minN && totalN - st.withN >= 1) {
+          const r = summarize(it.k, it.label, st.withN, st.withHit, totalN, totalHit, group);
+          r.sig = it.sig;
+          ready.push(r);
+        } else if (st.withN < minN) {
+          pending.push({ key: it.k, label: it.label, n: st.withN });
         }
       }
       ready.sort(sortResults);
@@ -231,7 +253,7 @@
     }
 
     const foods = finish(foodStats, 'food');
-    const ctx = finish(ctxStats, 'ctx');
+    const ctx = finish(ctxStats, 'ctx', new Set(foods.ready.map(x => x.sig)));
 
     // Rizikové jedlo: kedy vadí viac / menej (porovnanie v rámci rizikových jedál)
     const minSub = Math.min(minN, 3);
