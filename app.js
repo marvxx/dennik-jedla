@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.6';
+  const APP_VERSION = '2.7';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -50,7 +50,7 @@
   ];
   const PLACES = [['doma', 'doma'], ['restauracia', 'reštaurácia / jedáleň'], ['niekto', 'u niekoho'], ['kupovane', 'kupované hotové']];
   const KINDS = ['kŕč', 'nadúvanie', 'plynatosť', 'nevoľnosť', 'pálenie záhy', 'nutkanie na stolicu'];
-  const LOCATION = [['horna', 'hore'], ['pupok', 'okolo pupka'], ['dolna', 'dole'], ['cele', 'celé brucho']];
+  const LOCATION = [['horna', 'hore'], ['pupok', 'okolo pupka'], ['dolna', 'dole'], ['lava', 'ľavá strana'], ['prava', 'pravá strana'], ['cele', 'celé brucho']];
   const DURATIONS = ['5 min', '15 min', '30 min', '1 h', '2 h', 'viac hodín'];
   const MOODS = [[1, '😣'], [2, '🙁'], [3, '😐'], [4, '🙂'], [5, '😄']];
   const MOOD_TXT = { 1: 'veľmi zlá', 2: 'zlá', 3: 'neutrálna', 4: 'dobrá', 5: 'veľmi dobrá' };
