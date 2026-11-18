@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.7';
+  const APP_VERSION = '2.8';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -574,9 +574,11 @@
     const q = quickFor(draft.type).filter(t => !favSet.has(t.toLowerCase()));
     const chipsHtml = favs.map((f, i) => `<button type="button" class="chip fav" data-fav="${i}">★ ${esc(f.desc)}</button>`).join('') +
       q.map(t => `<button type="button" class="chip" data-q="${esc(t)}">${esc(t)}</button>`).join('');
-    const quick = chipsHtml ? `<div class="chips quick scroll">${chipsHtml}</div>` : '';
+    const n = favs.length + q.length;
+    const quick = chipsHtml ? `<details class="quick-dd"${draft.quickOpen ? ' open' : ''}><summary>Naposledy ${isFood ? 'jedené' : 'zapísané'} <span>${n}</span></summary>
+      <div class="chips quick">${chipsHtml}</div><p class="tiny" style="margin:8px 0 0">Ťukni na viac položiek, pridajú sa za seba. Opätovným ťuknutím položku odoberieš.</p></details>` : '';
     const star = isFood ? `<button type="button" class="star${isFav(draft.desc) ? ' on' : ''}" id="fav-btn" data-act="fav" aria-label="Uložiť medzi obľúbené">${favBtnText()}</button>` : '';
-    return grp('', `<div class="desc-row"><input type="text" id="f-desc" class="big" value="${esc(draft.desc)}" placeholder="${esc(placeholder)}" enterkeyhint="done">${isFood ? `<button type="button" class="star" data-act="scan" aria-label="Skenovať čiarový kód">${ic('scan')}</button>` : ''}${star}</div>${quick}`);
+    return grp('', `<div class="desc-row"><textarea id="f-desc" class="big" rows="1" placeholder="${esc(placeholder)}" enterkeyhint="done">${esc(draft.desc)}</textarea>${isFood ? `<span class="desc-btns">${star}<button type="button" class="star" data-act="scan" aria-label="Skenovať čiarový kód">${ic('scan')}</button></span>` : ''}</div>${quick}`);
   }
 
   // ---------- Skenovanie balených výrobkov ----------
@@ -733,7 +735,7 @@
       if (src.portion && !append) { draft.portion = src.portion; const g = $('.chips[data-field="portion"]'); if (g) refreshGroup(g, draft.portion); }
     }
     const inp = $('#f-desc');
-    if (inp) { inp.value = draft.desc; inp.classList.remove('invalid'); }
+    if (inp) { inp.value = draft.desc; inp.classList.remove('invalid'); growDesc(); }
     refreshFoodExtras();
   }
 
@@ -746,6 +748,39 @@
         <label>Iný dátum<input type="date" id="f-date" value="${dateStr(draft.ts)}" max="${todayStr()}"></label>
         <label>Iný čas<input type="time" id="f-time" value="${fmtTime(draft.ts)}"></label>
       </div>`);
+  }
+
+  // Pole s názvom jedla rastie podľa dĺžky textu
+  // Rýchle voľby, ktoré už sú v popise, sú označené
+  function descParts() { return draft.desc.split(/\s*,\s*/).map(x => x.trim().toLowerCase()).filter(Boolean); }
+  function markQuick() {
+    const parts = descParts();
+    $$('.chips.quick .chip[data-q]').forEach(c => c.classList.toggle('on', parts.includes(c.dataset.q.toLowerCase())));
+    $$('.chips.quick .chip[data-fav]').forEach(c => {
+      const f = favorites()[Number(c.dataset.fav)];
+      c.classList.toggle('on', !!f && parts.includes(f.desc.trim().toLowerCase()));
+    });
+  }
+  // Ak je položka už v popise, odoberie ju a vráti true
+  function quickOff(val) {
+    const parts = draft.desc.split(/\s*,\s*/).map(x => x.trim()).filter(Boolean);
+    const i = parts.findIndex(x => x.toLowerCase() === val.trim().toLowerCase());
+    if (i < 0) return false;
+    parts.splice(i, 1);
+    draft.desc = parts.join(', ');
+    const inp = $('#f-desc');
+    if (inp) inp.value = draft.desc;
+    growDesc();
+    refreshFoodExtras();
+    return true;
+  }
+
+  function growDesc() {
+    markQuick();
+    const t = document.getElementById('f-desc');
+    if (!t) return;
+    t.style.height = 'auto';
+    t.style.height = t.scrollHeight + 'px';
   }
 
   function setTimeInputs() {
@@ -831,6 +866,7 @@
       <button type="submit" class="btn primary">${editingId ? 'Uložiť zmeny' : 'Uložiť'}</button>
     </div>`;
     f.innerHTML = h;
+    growDesc();
   }
 
   function validate() {
@@ -1730,6 +1766,7 @@
     const q = t.closest('.chip[data-q]');
     if (q) {
       const val = q.dataset.q;
+      if (quickOff(val)) return;
       const src = entries.filter(e => e.type === draft.type && (e.desc || '').trim().toLowerCase() === val.toLowerCase())
         .sort((a, b) => b.ts - a.ts)[0];
       applyQuick(val, src);
@@ -1737,7 +1774,7 @@
     }
 
     const fv = t.closest('.chip[data-fav]');
-    if (fv) { const f = favorites()[Number(fv.dataset.fav)]; if (f) applyQuick(f.desc, f); return; }
+    if (fv) { const f = favorites()[Number(fv.dataset.fav)]; if (f && !quickOff(f.desc)) applyQuick(f.desc, f); return; }
 
     const tg = t.closest('.chip[data-tag]');
     if (tg && tg.closest('#tag-chips')) {
@@ -1963,7 +2000,11 @@
 
   document.addEventListener('input', ev => {
     const t = ev.target;
-    if (t.id === 'f-desc') { draft.desc = t.value; t.classList.remove('invalid'); refreshFoodExtras(); }
+    if (t.id === 'f-desc') {
+      // názov je jeden riadok textu: zalomenia (aj z vloženého textu) nahradíme medzerou
+      if (/[\r\n]/.test(t.value)) t.value = t.value.replace(/\s*[\r\n]+\s*/g, ' ');
+      draft.desc = t.value; t.classList.remove('invalid'); growDesc(); refreshFoodExtras();
+    }
     else if (t.id === 'f-note') draft.note = t.value;
     else if (t.id === 'f-amount') draft.amount = t.value;
     else if (t.id === 'q') { searchQ = t.value; renderSearch(); }
@@ -2009,7 +2050,7 @@
   });
 
   document.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && (ev.target.type === 'text' || ev.target.type === 'search')) {
+    if (ev.key === 'Enter' && (ev.target.id === 'f-desc' || (ev.target.tagName === 'INPUT' && (ev.target.type === 'text' || ev.target.type === 'search')))) {
       ev.preventDefault();
       ev.target.blur();
     }
@@ -2017,6 +2058,9 @@
   });
 
   window.addEventListener('scroll', syncNavbar, { passive: true });
+
+  // zapamätá, či je zoznam posledných jedál rozbalený (aj po prekreslení formulára)
+  document.addEventListener('toggle', ev => { if (ev.target.classList && ev.target.classList.contains('quick-dd')) draft.quickOpen = ev.target.open; }, true);
 
   $('#entry-form').addEventListener('submit', ev => { ev.preventDefault(); saveDraft(); });
 

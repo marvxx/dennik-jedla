@@ -453,6 +453,13 @@ details.more[open] > summary::before { content: "－ "; }
 .grp .chips.quick .chip.fav { background: var(--sun-soft); }
 .grp input[type="text"], .grp input[type="datetime-local"], .grp textarea { background: var(--bg); border-color: transparent; }
 .grp input.big { background: none; border: 0; padding: 4px 2px; font: 600 21px/1.3 var(--round); box-shadow: none; border-radius: 0; }
+.grp textarea.big {
+  display: block; width: 100%; min-height: 0; resize: none; overflow: hidden;
+  background: none; border: 0; padding: 6px 2px; font: 600 17px/1.35 var(--round); box-shadow: none; border-radius: 0;
+}
+.grp textarea.big:focus { box-shadow: none; }
+.desc-row { align-items: flex-start; }
+.desc-row .star { margin-top: 0; }
 .grp input.big:focus { box-shadow: none; }
 .desc-row { display: flex; align-items: center; gap: 8px; }
 .desc-row input { flex: 1; min-width: 0; }
@@ -615,3 +622,19 @@ input[type="search"]:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .prod-top .tbadge { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; font-size: 19px; flex-shrink: 0; }
 .prod-top .x { width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--bg); color: var(--ink-2); font-size: 14px; padding: 0; flex-shrink: 0; }
 .desc-row .star .ic { font-size: 20px; }
+
+/* hviezdička hore, skener pod ňou, úplne vpravo */
+.desc-btns { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; margin: -4px -6px 0 0; }
+
+/* posledné jedlá: rozbaľovací zoznam, dá sa vybrať viac */
+.quick-dd { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 4px; }
+.quick-dd > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 2px; font-weight: 600; font-size: 15px; color: var(--accent); }
+.quick-dd > summary::-webkit-details-marker { display: none; }
+.quick-dd > summary span { font-size: 12.5px; font-weight: 700; color: var(--ink-3); background: var(--bg); border-radius: 999px; padding: 1px 8px; }
+.quick-dd > summary::after { content: ""; width: 8px; height: 8px; margin: -3px 0 0 auto; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform .2s; }
+.quick-dd[open] > summary::after { transform: rotate(-135deg); margin-top: 4px; }
+.quick-dd .chips.quick { margin-top: 4px; }
+.grp .chips.quick .chip.on { background: var(--accent); color: var(--accent-ink); }
+.grp .desc-row { align-items: flex-start; }
+.quick-dd > summary::after { content: "›"; width: auto; height: auto; margin: 0 0 0 auto; border: 0; font-size: 22px; line-height: 1; transform: rotate(90deg); }
+.quick-dd[open] > summary::after { transform: rotate(-90deg); margin-top: 0; }
