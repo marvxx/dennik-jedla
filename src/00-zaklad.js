@@ -1,5 +1,5 @@
 
-  const APP_VERSION = '3.8';
+  const APP_VERSION = '3.9.1';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };

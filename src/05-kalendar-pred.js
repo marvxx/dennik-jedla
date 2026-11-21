@@ -27,6 +27,16 @@
     return h;
   }
 
+  // Filter zoznamu dní
+  let listFilter = 'all';
+  const LIST_FILTERS = [['all', 'Všetko'], ['sym', 'S ťažkosťami'], ['ok', 'Bez ťažkostí'], ['stool', 'Stolica'], ['med', 'Lieky']];
+  function dayPasses(f, d, list, ix) {
+    if (f === 'sym') return !!ix.sev[d];
+    if (f === 'ok') return !ix.sev[d] && !!(days[d] && days[d].noSymptoms);
+    if (f === 'stool' || f === 'med') return list.some(e => e.type === f);
+    return true;
+  }
+
   function renderList() {
     const el = $('#view-list');
     let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div><button type="button" class="help-q" data-act="help" data-sec="list" aria-label="Pomocník">?</button></header>
@@ -37,13 +47,19 @@
       if (!byDay.has(d)) byDay.set(d, []);
       byDay.get(d).push(e);
     });
-    const dates = [...byDay.keys()].sort().reverse();
-    if (!dates.length) {
+    const allDates = [...byDay.keys()].sort().reverse();
+    if (!allDates.length) {
       el.innerHTML = h + `<div class="card empty"><div class="big"></div><p><b>Zatiaľ žiadne záznamy</b><br>Prvý zapíšeš tlačidlom ＋ dole.</p></div>`;
       return;
     }
     const ix = dayIndex();
-    h += '<h2 class="sub">Posledné dni</h2><div class="dayrows">';
+    const dates = allDates.filter(d => dayPasses(listFilter, d, byDay.get(d), ix));
+    h += '<h2 class="sub">Posledné dni</h2><div class="chips lf" role="group" aria-label="Filter dní">' + LIST_FILTERS.map(([k, l]) => {
+      const n = k === 'all' ? allDates.length : allDates.filter(d => dayPasses(k, d, byDay.get(d), ix)).length;
+      return `<button type="button" class="chip${k === listFilter ? ' on' : ''}" data-lf="${k}">${l} <span>${n}</span></button>`;
+    }).join('') + '</div>';
+    if (!dates.length) h += '<p class="muted small" style="margin:0 4px 14px">Žiadny taký deň.</p>';
+    h += '<div class="dayrows">';
     for (const d of dates.slice(0, listDays)) {
       const sev = ix.sev[d];
       const info = daySummary(byDay.get(d), d, true);

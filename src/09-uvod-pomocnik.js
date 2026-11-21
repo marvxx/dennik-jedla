@@ -42,8 +42,9 @@
     ['today', 'Máš teraz ťažkosti?', 'Najrýchlejší zápis: ťukni na číslo 1 až 10 a ťažkosti sú zapísané s aktuálnym časom. Druh a miesto môžeš doplniť cez „Doplniť“ v ozname.'],
     ['today', 'Chýba obed? (raňajky, večera)', 'Ak v dni so záznamami chýba bežné jedlo, denník sa spýta. Ťuknutím ho zapíšeš s typickým časom, ktorý môžeš zmeniť. Ak si naozaj nejedla, nič nerob.'],
     ['today', 'Pravidelné', 'Veci, ktoré si nastavila na každý deň (napr. ranná káva, probiotiká). Keď sa blíži ich čas, zapíšeš ich jedným ťuknutím.'],
-    ['today', 'Voda a káva', 'Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
+    ['today', 'Voda a káva', 'Jeden dielik vody je pohár, asi 0,25 l. Cieľ je 6 dielikov, teda 1,5 l. Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov (1,25 l) za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
     ['today', 'Aký bol dnešný deň?', 'Spánok, menštruácia a pohyb raz za deň (pitie sa počíta v karte Voda a káva). Nepovinné, ale pomáha zistiť, či ťažkosti nesúvisia s dňom, nielen s jedlom.'],
+    ['today', 'Na obed ti sedelo (čo si dať)', 'Pred raňajkami, obedom a večerou ukáže jedlá, ktoré si v túto dennú dobu jedla aspoň 2× a nemala si po nich ťažkosti. Jedlá s tvojimi intoleranciami sa nenavrhujú. Ťuknutím jedlo zapíšeš.'],
     ['today', 'Deň bez ťažkostí', 'Ťukni večer, ak v ten deň nebolo nič. Je to rovnako dôležité ako zapisovať ťažkosti: bez toho denník nevie, či bol deň pokojný, alebo si len nezapisovala.'],
     ['today', 'Tvoj týždeň', 'V nedeľu večer až v utorok zhrnutie týždňa: koľko dní bolo s ťažkosťami v porovnaní s minulým týždňom a jedna rada. Krížikom ho skryješ.'],
     ['today', 'Zavádzanie (pruh hore)', 'Prebieha opätovné zavedenie: každý deň ti povie, akú porciu zjesť. Po zjedení ťukni „Zjedla som“ a sleduj ťažkosti. Viac v časti Súvislosti – Moje.'],
@@ -63,6 +64,7 @@
     ['entry', 'Skenovanie čiarového kódu', 'Pri balených výrobkoch načíta názov a zloženie z databázy Open Food Facts. Posiela sa tam len číslo kódu.'],
     ['entry', 'Zapísať znova teraz', 'Pri úprave jedla alebo lieku: zapíše to isté s dnešným časom.'],
     ['list', 'Farby v kalendári', 'Zelená = deň bez ťažkostí, žltá, oranžová, červená = slabé, stredné, silné ťažkosti, sivá = zapísané, ale nevieme o ťažkostiach. Ružová bodka = menštruácia.'],
+    ['list', 'Filter dní', 'Nad zoznamom dní: zobrazí len dni s ťažkosťami, bez ťažkostí, so stolicou alebo s liekmi. Číslo pri filtri je počet takých dní.'],
     ['list', 'Hľadať v denníku', 'Napíš jedlo alebo slovo (aj skupinu, napr. mliečne). Ukážu sa všetky záznamy, kde sa vyskytuje, a v kalendári sa tie dni zvýraznia krúžkom. Pod kalendárom uvidíš, v koľkých z týchto dní boli ťažkosti v porovnaní s ostatnými dňami.'],
     ['insights', 'Hlavné podozrenie', 'Jedlo alebo skupina, ktorá najviac vyzerá, že súvisí s ťažkosťami. Spája všetky výpočty dokopy (po jedle, za deň, na druhý deň, najhoršie dni), aby si výsledky neodporovali.'],
     ['insights', 'Číslo 2,1× (koľkokrát)', '2× znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných. „Výrazne“ znamená, že inak sa ťažkosti v sledovanom čase neobjavili vôbec.'],
@@ -97,15 +99,45 @@
     ['settings', 'Skratky a Siri', 'Zápis jedným ťuknutím z plochy (Android: podrž ikonu) alebo cez aplikáciu Skratky na iPhone.'],
   ];
   const normH = t => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // ďalšie slová, pod ktorými sa téma dá nájsť
+  const HELP_KEYS = {
+    'Voda a káva': 'voda pitie piť pohár liter dielik tekutiny kofeín',
+    'Okolnosti dňa': 'voda pitie málo pitia spánok menštruácia pohyb cyklus',
+    'Aký bol dnešný deň?': 'spánok menštruácia pohyb šport',
+    'Máš teraz ťažkosti?': 'bolesť brucho rýchly zápis sila',
+    'Laktáza / enzým': 'tabletka mlieko mliečne laktóza',
+    'Obsahovalo (skupiny potravín)': 'mliečne lepok laktóza cibuľa cesnak štítky',
+    'Moje intolerancie': 'alergia laktóza lepok mliečne vadí',
+    'Záloha': 'zálohovať obnoviť icloud súbory stratiť telefón',
+    'Pripomienky': 'upozornenie notifikácia pripomenúť kalendár zabudnúť',
+    'Pravidelné': 'každý deň opakovať lieky probiotiká káva',
+    'Hľadať v denníku': 'vyhľadať nájsť hľadanie',
+    'Filter dní': 'filtrovať zoznam stolica lieky ťažkosti',
+    'Na obed ti sedelo (čo si dať)': 'čo jesť návrh nápad bezpečné jedlo raňajky večera',
+    'Prehľad pre lekára': 'lekár doktor vizita pdf tlač',
+    'Lieky a doplnky': 'tabletky probiotiká vitamíny',
+    'Stolica: Bristolská škála': 'hnačka zápcha riedka tvrdá',
+    'Skenovanie čiarového kódu': 'čiarový kód obal výrobok skener',
+  };
+  // zhoda aj v inom tvare: „voda“ nájde „vody“, „pitie“ nájde „pitia“
+  function helpHit(words, q) {
+    return q.length > 0 && q.every(w => words.some(x => {
+      if (x.startsWith(w)) return true;
+      if (w.length < 4) return false;
+      let i = 0;
+      while (i < w.length && x[i] === w[i]) i++;
+      return i >= Math.max(3, w.length - 2);
+    }));
+  }
 
   function openHelp(sec) {
     const secs = HELP_SECS.map(([k, l]) => {
       const items = HELP.filter(x => x[0] === k);
       return `<section class="help-sec" data-hs="${k}"><h3>${l}</h3>` + items.map(([, t, txt]) =>
-        `<details class="help-item" data-ht="${esc(normH(t + ' ' + txt))}"${sec && k === sec ? '' : ''}><summary>${esc(t)}</summary><p>${esc(txt)}</p></details>`).join('') + '</section>';
+        `<details class="help-item" data-ht="${esc(normH(t + ' ' + txt + ' ' + (HELP_KEYS[t] || '')))}"${sec && k === sec ? '' : ''}><summary>${esc(t)}</summary><p>${esc(txt)}</p></details>`).join('') + '</section>';
     }).join('');
     $('#help-sheet').innerHTML = `<div class="sheet-head"><h2>Pomocník</h2><button type="button" class="x" data-act="help-close" aria-label="Zavrieť">✕</button></div>
-      <input type="search" id="help-q" placeholder="Hľadať, napr. bodky, dávka, odkiaľ" enterkeyhint="search">
+      <input type="search" id="help-q" placeholder="Hľadať, napr. voda, bodky, záloha" enterkeyhint="search">
       <div class="help-tabs">${HELP_SECS.map(([k, l]) => `<button type="button" class="chip${k === sec ? ' on' : ''}" data-hsec="${k}">${l.replace(' (tlačidlo ＋)', '')}</button>`).join('')}</div>
       <div id="help-list">${secs}</div><p class="help-none" hidden>Nič sa nenašlo. Skús iné slovo.</p>
       <div class="savebar"><button type="button" class="btn" data-act="welcome">Úvod znova</button><button type="button" class="btn primary" data-act="help-close">Hotovo</button></div>`;
@@ -119,9 +151,10 @@
   }
   function filterHelp(q) {
     const n = normH(q.trim());
+    const qw = n.split(/[^a-z0-9]+/).filter(Boolean);
     let any = false;
     $$('.help-item').forEach(d => {
-      const hit = !n || d.dataset.ht.includes(n);
+      const hit = !n || d.dataset.ht.includes(n) || helpHit(d.dataset.ht.split(/[^a-z0-9]+/), qw);
       d.hidden = !hit;
       if (n && hit) d.open = true;
       if (!n) d.open = false;

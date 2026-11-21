@@ -958,3 +958,19 @@ details.more.pend > summary { padding: 6px 0; font-size: .8824rem; color: var(--
 .hero .kids .chip span { color: var(--ink-3); font-weight: 600; margin-left: 2px; }
 .sus-row small.kids-t { color: var(--ink-3); margin-top: 2px; }
 .sheet:not(.open) { pointer-events: none; }
+
+/* 3.8.1: voda v litroch */
+.w-l { display: inline-block; font-weight: 700; color: var(--med); }
+.w-l.bump { animation: wbump .35s ease-out; }
+@keyframes wbump { 40% { transform: scale(1.25); } }
+@media (prefers-reduced-motion: reduce) { .w-l.bump { animation: none; } }
+
+/* 3.9: filter dní, čo si dať */
+.chips.lf { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 10px; padding: 0 16px 2px; scrollbar-width: none; }
+.chips.lf::-webkit-scrollbar { display: none; }
+.chips.lf .chip { flex-shrink: 0; min-height: 36px; padding: 6px 12px; font-size: .8824rem; }
+.chips.lf .chip span { color: var(--ink-3); font-weight: 600; margin-left: 2px; }
+.chips.lf .chip.on span { color: inherit; opacity: .8; }
+.card.ideas { background: var(--food-soft, var(--surface)); }
+.card.ideas .chip { background: var(--surface); border-color: transparent; font-weight: 600; }
+.card.ideas .chip .tiny { color: var(--ink-3); }

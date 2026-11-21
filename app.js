@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.8';
+  const APP_VERSION = '3.9.1';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -640,7 +640,7 @@
     if (v.sleep != null) parts.push('spánok ' + lab(SLEEP, v.sleep));
     if (v.period != null) parts.push(v.period ? 'menštruácia' : 'bez menštruácie');
     if (v.activity != null) parts.push('pohyb ' + lab(ACTIVITY, v.activity));
-    if (v.glasses) parts.push('voda ' + v.glasses + '×');
+    if (v.glasses) parts.push('voda ' + liters(v.glasses));
     else if (v.water != null) parts.push('pitie ' + lab(WATER, v.water));
     return parts.join(' · ');
   }
@@ -784,6 +784,7 @@
       h += `<div class="card empty"><div class="big"></div>
         <p><b>${isToday ? 'Dnes zatiaľ nič zapísané' : 'V tento deň nie je nič zapísané'}</b><br>Ťukni dole na ＋ a zapíš jedlo alebo ťažkosti.</p></div>`;
     }
+    h += ideasHtml(d, list);
     if (isToday) h += weekHtml();
     h += missHtml(d, list);
     h += dayCardHtml(d);
@@ -927,6 +928,8 @@
   // Voda sa počíta v pohároch za deň (days[d].glasses). Káva sa zapisuje ako jedlo s časom,
   // aby sa dala vyhodnotiť ako ostatné jedlá (napr. „káva ako prvé v daný deň“).
   const WATER_GOAL = 6;
+  const GLASS_L = 0.25;   // jeden dielik = pohár 2,5 dl
+  const liters = g => String(Math.round(g * GLASS_L * 100) / 100).replace('.', ',') + ' l';
   const isCoffee = e => e.type === 'food' && Analysis.mealTags(e).includes('kava');
 
   // najčastejšie zapisovaná káva (napr. „káva s mliekom“), inak len „káva“
@@ -937,15 +940,16 @@
     return top ? top[0] : 'káva';
   }
 
+  let waterBump = false;   // číslo krátko poskočí po ťuknutí
   function drinkHtml(d, list) {
     const g = (days[d] && days[d].glasses) || 0;
     const cups = list.filter(isCoffee).length;
     const drops = [...Array(Math.max(WATER_GOAL, g))].map((_, i) => `<i class="${i < g ? 'on' : ''}"></i>`).join('');
     return `<div class="drink">
       <div class="dr-row"><span class="dr-ico water">${ic('drop')}</span>
-        <span class="dr-txt"><b>Voda</b><small>${g} ${g === 1 ? 'pohár' : g >= 2 && g <= 4 ? 'poháre' : 'pohárov'}${g < WATER_GOAL ? ' · cieľ ' + WATER_GOAL : ' ✓'}</small><span class="drops">${drops}</span></span>
-        <button type="button" class="dr-btn minus" data-act="water" data-v="-1" data-date="${d}" aria-label="Ubrať pohár"${g ? '' : ' disabled'}>−</button>
-        <button type="button" class="dr-btn" data-act="water" data-v="1" data-date="${d}" aria-label="Pridať pohár">＋</button></div>
+        <span class="dr-txt"><b>Voda</b><small><span class="w-l${waterBump ? ' bump' : ''}">${liters(g)}</span>${g < WATER_GOAL ? ' · cieľ ' + liters(WATER_GOAL) : ' ✓'}</small><span class="drops">${drops}</span></span>
+        <button type="button" class="dr-btn minus" data-act="water" data-v="-1" data-date="${d}" aria-label="Ubrať 0,25 l"${g ? '' : ' disabled'}>−</button>
+        <button type="button" class="dr-btn" data-act="water" data-v="1" data-date="${d}" aria-label="Pridať 0,25 l">＋</button></div>
       <div class="dr-row"><span class="dr-ico coffee">${ic('cup')}</span>
         <span class="dr-txt"><b>Káva</b><small>${cups ? cups + '× · ' : ''}${esc(usualCoffee())}</small></span>
         <button type="button" class="dr-btn" data-act="coffee" data-date="${d}" aria-label="Zapísať kávu">＋</button></div></div>`;
@@ -974,6 +978,66 @@
     if (!meta.firstUse) await setMeta('firstUse', now);
     buzz(8);
     return e;
+  }
+
+  // ---------- Čo si dať: jedlá, po ktorých neboli ťažkosti ----------
+  // Celé jedlá tak, ako boli zapísané (nie jednotlivé suroviny). Rátajú sa len dni, o ktorých vieme,
+  // či boli ťažkosti (zapísané ťažkosti alebo „Deň bez ťažkostí“).
+  const slotOf = ts => {
+    const h = (ts - parseDay(dayOf(ts)).getTime()) / 3600e3;
+    const s = MEAL_SLOTS.findIndex(([, a, b]) => h >= a && h < b);
+    return s;
+  };
+
+  function safeMeals() {
+    return memo('safeMeals', () => {
+      const toH = meta.toH != null ? meta.toH : 6;
+      const symTs = entries.filter(e => e.type === 'symptom').map(e => e.ts).sort((a, b) => a - b);
+      const ix = dayIndex();
+      const risk = riskTags();
+      // je ťažkosť v okne (ts, ts + toH]? binárne vyhľadanie prvej ťažkosti po jedle
+      const hitAfter = ts => {
+        let lo = 0, hi = symTs.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (symTs[m] <= ts) lo = m + 1; else hi = m; }
+        return lo < symTs.length && symTs[lo] <= ts + toH * 3600e3;
+      };
+      const M = new Map();
+      for (const e of entries) {
+        if (e.type !== 'food' || !e.desc || isCoffee(e)) continue;
+        if (e.ts + toH * 3600e3 > Date.now()) continue;   // ešte sa čaká
+        const d = dayOf(e.ts);
+        if (!ix.sev[d] && !(days[d] && days[d].noSymptoms)) continue;   // deň bez informácie o ťažkostiach
+        const k = e.desc.trim().toLowerCase();
+        let m = M.get(k);
+        if (!m) { m = { desc: e.desc.trim(), ok: 0, bad: 0, last: 0, slots: [0, 0, 0], risky: false }; M.set(k, m); }
+        if (hitAfter(e.ts)) m.bad++; else m.ok++;
+        if (e.ts > m.last) { m.last = e.ts; m.desc = e.desc.trim(); }
+        const s = slotOf(e.ts);
+        if (s >= 0) m.slots[s]++;
+        if (Analysis.mealTags(e).some(t => risk.includes(t))) m.risky = true;
+      }
+      return [...M.values()]
+        .filter(m => !m.risky && ((m.ok >= 2 && !m.bad) || (m.ok >= 4 && m.bad / (m.ok + m.bad) <= 0.15)))
+        .sort((a, b) => b.ok - a.ok || b.last - a.last);
+    });
+  }
+
+  // Na obrazovke Dnes: návrh na najbližšie jedlo, ktoré ešte nie je zapísané
+  function ideasHtml(d, list) {
+    if (d !== todayStr()) return '';
+    const nowH = (Date.now() - parseDay(d).getTime()) / 3600e3;
+    const food = list.filter(e => e.type === 'food' && !isCoffee(e));
+    const si = MEAL_SLOTS.findIndex(([, a, b]) => nowH < b && !food.some(e => {
+      const x = (e.ts - parseDay(d).getTime()) / 3600e3;
+      return x >= a && x < b;
+    }));
+    if (si < 0) return '';
+    const picks = safeMeals().filter(m => m.slots[si] > 0).slice(0, 5);
+    if (picks.length < 2) return '';
+    const word = ['Na raňajky', 'Na obed', 'Na večeru'][si];
+    return `<div class="card quick ideas"><h3>${word} ti sedelo</h3><div class="chips">` +
+      picks.map(m => `<button type="button" class="chip" data-act="eat-idea" data-idea="${esc(m.desc)}">${esc(m.desc)} <span class="tiny">${m.ok}×</span></button>`).join('') +
+      '</div><p class="tiny" style="margin:8px 0 0">Jedlá, po ktorých si nemala ťažkosti. Ťuknutím zapíšeš.</p></div>';
   }
   // ---------- Skenovanie balených výrobkov ----------
   const products = () => meta.products || {};
@@ -1491,6 +1555,16 @@
     return h;
   }
 
+  // Filter zoznamu dní
+  let listFilter = 'all';
+  const LIST_FILTERS = [['all', 'Všetko'], ['sym', 'S ťažkosťami'], ['ok', 'Bez ťažkostí'], ['stool', 'Stolica'], ['med', 'Lieky']];
+  function dayPasses(f, d, list, ix) {
+    if (f === 'sym') return !!ix.sev[d];
+    if (f === 'ok') return !ix.sev[d] && !!(days[d] && days[d].noSymptoms);
+    if (f === 'stool' || f === 'med') return list.some(e => e.type === f);
+    return true;
+  }
+
   function renderList() {
     const el = $('#view-list');
     let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div><button type="button" class="help-q" data-act="help" data-sec="list" aria-label="Pomocník">?</button></header>
@@ -1501,13 +1575,19 @@
       if (!byDay.has(d)) byDay.set(d, []);
       byDay.get(d).push(e);
     });
-    const dates = [...byDay.keys()].sort().reverse();
-    if (!dates.length) {
+    const allDates = [...byDay.keys()].sort().reverse();
+    if (!allDates.length) {
       el.innerHTML = h + `<div class="card empty"><div class="big"></div><p><b>Zatiaľ žiadne záznamy</b><br>Prvý zapíšeš tlačidlom ＋ dole.</p></div>`;
       return;
     }
     const ix = dayIndex();
-    h += '<h2 class="sub">Posledné dni</h2><div class="dayrows">';
+    const dates = allDates.filter(d => dayPasses(listFilter, d, byDay.get(d), ix));
+    h += '<h2 class="sub">Posledné dni</h2><div class="chips lf" role="group" aria-label="Filter dní">' + LIST_FILTERS.map(([k, l]) => {
+      const n = k === 'all' ? allDates.length : allDates.filter(d => dayPasses(k, d, byDay.get(d), ix)).length;
+      return `<button type="button" class="chip${k === listFilter ? ' on' : ''}" data-lf="${k}">${l} <span>${n}</span></button>`;
+    }).join('') + '</div>';
+    if (!dates.length) h += '<p class="muted small" style="margin:0 4px 14px">Žiadny taký deň.</p>';
+    h += '<div class="dayrows">';
     for (const d of dates.slice(0, listDays)) {
       const sev = ix.sev[d];
       const info = daySummary(byDay.get(d), d, true);
@@ -2912,8 +2992,9 @@
     ['today', 'Máš teraz ťažkosti?', 'Najrýchlejší zápis: ťukni na číslo 1 až 10 a ťažkosti sú zapísané s aktuálnym časom. Druh a miesto môžeš doplniť cez „Doplniť“ v ozname.'],
     ['today', 'Chýba obed? (raňajky, večera)', 'Ak v dni so záznamami chýba bežné jedlo, denník sa spýta. Ťuknutím ho zapíšeš s typickým časom, ktorý môžeš zmeniť. Ak si naozaj nejedla, nič nerob.'],
     ['today', 'Pravidelné', 'Veci, ktoré si nastavila na každý deň (napr. ranná káva, probiotiká). Keď sa blíži ich čas, zapíšeš ich jedným ťuknutím.'],
-    ['today', 'Voda a káva', 'Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
+    ['today', 'Voda a káva', 'Jeden dielik vody je pohár, asi 0,25 l. Cieľ je 6 dielikov, teda 1,5 l. Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov (1,25 l) za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
     ['today', 'Aký bol dnešný deň?', 'Spánok, menštruácia a pohyb raz za deň (pitie sa počíta v karte Voda a káva). Nepovinné, ale pomáha zistiť, či ťažkosti nesúvisia s dňom, nielen s jedlom.'],
+    ['today', 'Na obed ti sedelo (čo si dať)', 'Pred raňajkami, obedom a večerou ukáže jedlá, ktoré si v túto dennú dobu jedla aspoň 2× a nemala si po nich ťažkosti. Jedlá s tvojimi intoleranciami sa nenavrhujú. Ťuknutím jedlo zapíšeš.'],
     ['today', 'Deň bez ťažkostí', 'Ťukni večer, ak v ten deň nebolo nič. Je to rovnako dôležité ako zapisovať ťažkosti: bez toho denník nevie, či bol deň pokojný, alebo si len nezapisovala.'],
     ['today', 'Tvoj týždeň', 'V nedeľu večer až v utorok zhrnutie týždňa: koľko dní bolo s ťažkosťami v porovnaní s minulým týždňom a jedna rada. Krížikom ho skryješ.'],
     ['today', 'Zavádzanie (pruh hore)', 'Prebieha opätovné zavedenie: každý deň ti povie, akú porciu zjesť. Po zjedení ťukni „Zjedla som“ a sleduj ťažkosti. Viac v časti Súvislosti – Moje.'],
@@ -2933,6 +3014,7 @@
     ['entry', 'Skenovanie čiarového kódu', 'Pri balených výrobkoch načíta názov a zloženie z databázy Open Food Facts. Posiela sa tam len číslo kódu.'],
     ['entry', 'Zapísať znova teraz', 'Pri úprave jedla alebo lieku: zapíše to isté s dnešným časom.'],
     ['list', 'Farby v kalendári', 'Zelená = deň bez ťažkostí, žltá, oranžová, červená = slabé, stredné, silné ťažkosti, sivá = zapísané, ale nevieme o ťažkostiach. Ružová bodka = menštruácia.'],
+    ['list', 'Filter dní', 'Nad zoznamom dní: zobrazí len dni s ťažkosťami, bez ťažkostí, so stolicou alebo s liekmi. Číslo pri filtri je počet takých dní.'],
     ['list', 'Hľadať v denníku', 'Napíš jedlo alebo slovo (aj skupinu, napr. mliečne). Ukážu sa všetky záznamy, kde sa vyskytuje, a v kalendári sa tie dni zvýraznia krúžkom. Pod kalendárom uvidíš, v koľkých z týchto dní boli ťažkosti v porovnaní s ostatnými dňami.'],
     ['insights', 'Hlavné podozrenie', 'Jedlo alebo skupina, ktorá najviac vyzerá, že súvisí s ťažkosťami. Spája všetky výpočty dokopy (po jedle, za deň, na druhý deň, najhoršie dni), aby si výsledky neodporovali.'],
     ['insights', 'Číslo 2,1× (koľkokrát)', '2× znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných. „Výrazne“ znamená, že inak sa ťažkosti v sledovanom čase neobjavili vôbec.'],
@@ -2967,15 +3049,45 @@
     ['settings', 'Skratky a Siri', 'Zápis jedným ťuknutím z plochy (Android: podrž ikonu) alebo cez aplikáciu Skratky na iPhone.'],
   ];
   const normH = t => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // ďalšie slová, pod ktorými sa téma dá nájsť
+  const HELP_KEYS = {
+    'Voda a káva': 'voda pitie piť pohár liter dielik tekutiny kofeín',
+    'Okolnosti dňa': 'voda pitie málo pitia spánok menštruácia pohyb cyklus',
+    'Aký bol dnešný deň?': 'spánok menštruácia pohyb šport',
+    'Máš teraz ťažkosti?': 'bolesť brucho rýchly zápis sila',
+    'Laktáza / enzým': 'tabletka mlieko mliečne laktóza',
+    'Obsahovalo (skupiny potravín)': 'mliečne lepok laktóza cibuľa cesnak štítky',
+    'Moje intolerancie': 'alergia laktóza lepok mliečne vadí',
+    'Záloha': 'zálohovať obnoviť icloud súbory stratiť telefón',
+    'Pripomienky': 'upozornenie notifikácia pripomenúť kalendár zabudnúť',
+    'Pravidelné': 'každý deň opakovať lieky probiotiká káva',
+    'Hľadať v denníku': 'vyhľadať nájsť hľadanie',
+    'Filter dní': 'filtrovať zoznam stolica lieky ťažkosti',
+    'Na obed ti sedelo (čo si dať)': 'čo jesť návrh nápad bezpečné jedlo raňajky večera',
+    'Prehľad pre lekára': 'lekár doktor vizita pdf tlač',
+    'Lieky a doplnky': 'tabletky probiotiká vitamíny',
+    'Stolica: Bristolská škála': 'hnačka zápcha riedka tvrdá',
+    'Skenovanie čiarového kódu': 'čiarový kód obal výrobok skener',
+  };
+  // zhoda aj v inom tvare: „voda“ nájde „vody“, „pitie“ nájde „pitia“
+  function helpHit(words, q) {
+    return q.length > 0 && q.every(w => words.some(x => {
+      if (x.startsWith(w)) return true;
+      if (w.length < 4) return false;
+      let i = 0;
+      while (i < w.length && x[i] === w[i]) i++;
+      return i >= Math.max(3, w.length - 2);
+    }));
+  }
 
   function openHelp(sec) {
     const secs = HELP_SECS.map(([k, l]) => {
       const items = HELP.filter(x => x[0] === k);
       return `<section class="help-sec" data-hs="${k}"><h3>${l}</h3>` + items.map(([, t, txt]) =>
-        `<details class="help-item" data-ht="${esc(normH(t + ' ' + txt))}"${sec && k === sec ? '' : ''}><summary>${esc(t)}</summary><p>${esc(txt)}</p></details>`).join('') + '</section>';
+        `<details class="help-item" data-ht="${esc(normH(t + ' ' + txt + ' ' + (HELP_KEYS[t] || '')))}"${sec && k === sec ? '' : ''}><summary>${esc(t)}</summary><p>${esc(txt)}</p></details>`).join('') + '</section>';
     }).join('');
     $('#help-sheet').innerHTML = `<div class="sheet-head"><h2>Pomocník</h2><button type="button" class="x" data-act="help-close" aria-label="Zavrieť">✕</button></div>
-      <input type="search" id="help-q" placeholder="Hľadať, napr. bodky, dávka, odkiaľ" enterkeyhint="search">
+      <input type="search" id="help-q" placeholder="Hľadať, napr. voda, bodky, záloha" enterkeyhint="search">
       <div class="help-tabs">${HELP_SECS.map(([k, l]) => `<button type="button" class="chip${k === sec ? ' on' : ''}" data-hsec="${k}">${l.replace(' (tlačidlo ＋)', '')}</button>`).join('')}</div>
       <div id="help-list">${secs}</div><p class="help-none" hidden>Nič sa nenašlo. Skús iné slovo.</p>
       <div class="savebar"><button type="button" class="btn" data-act="welcome">Úvod znova</button><button type="button" class="btn primary" data-act="help-close">Hotovo</button></div>`;
@@ -2989,9 +3101,10 @@
   }
   function filterHelp(q) {
     const n = normH(q.trim());
+    const qw = n.split(/[^a-z0-9]+/).filter(Boolean);
     let any = false;
     $$('.help-item').forEach(d => {
-      const hit = !n || d.dataset.ht.includes(n);
+      const hit = !n || d.dataset.ht.includes(n) || helpHit(d.dataset.ht.split(/[^a-z0-9]+/), qw);
       d.hidden = !hit;
       if (n && hit) d.open = true;
       if (!n) d.open = false;
@@ -3142,6 +3255,9 @@
     const tr = t.closest('[data-trace]');
     if (tr) { openTrace(tr.dataset.trace); return; }
 
+    const lf = t.closest('[data-lf]');
+    if (lf) { listFilter = lf.dataset.lf; listDays = 14; renderList(); return; }
+
     const cd = t.closest('[data-cal]');
     if (cd) { todayExpanded = false; goDay(cd.dataset.cal); return; }
 
@@ -3196,7 +3312,9 @@
       case 'delete': deleteCurrent(); break;
       case 'water': {
         await addWater(act.dataset.date, Number(act.dataset.v));
+        waterBump = true;
         renderToday();
+        waterBump = false;
         break;
       }
       case 'coffee': {
@@ -3228,6 +3346,15 @@
         renderForm();
         break;
       }
+      case 'eat-idea': {
+        // návrh „Čo si dať“: formulár s týmto jedlom, skupinami a miestom z posledného zápisu
+        const val = act.dataset.idea;
+        openEntry();
+        const src = entries.filter(e => e.type === 'food' && (e.desc || '').trim().toLowerCase() === val.toLowerCase()).sort((a, b) => b.ts - a.ts)[0];
+        applyQuick(val, src);
+        renderForm();   // bez „Ako včera“, jedlo je už vybraté
+        break;
+      }
       case 'add-at': {
         // zabudnuté jedlo: formulár s časom typického jedla v tom dni
         openEntry();
@@ -3235,6 +3362,8 @@
         draft.tsTouched = true;
         draft.tsCustom = true;
         renderForm();
+        // kurzor do popisu ako pri ＋ (ešte v rámci ťuknutia, inak iPhone neukáže klávesnicu)
+        { const d = $('#f-desc'); if (d) d.focus({ preventScroll: true }); }
         break;
       }
       case 'rec-log': {

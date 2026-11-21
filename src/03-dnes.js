@@ -35,7 +35,7 @@
     if (v.sleep != null) parts.push('spánok ' + lab(SLEEP, v.sleep));
     if (v.period != null) parts.push(v.period ? 'menštruácia' : 'bez menštruácie');
     if (v.activity != null) parts.push('pohyb ' + lab(ACTIVITY, v.activity));
-    if (v.glasses) parts.push('voda ' + v.glasses + '×');
+    if (v.glasses) parts.push('voda ' + liters(v.glasses));
     else if (v.water != null) parts.push('pitie ' + lab(WATER, v.water));
     return parts.join(' · ');
   }
@@ -179,6 +179,7 @@
       h += `<div class="card empty"><div class="big"></div>
         <p><b>${isToday ? 'Dnes zatiaľ nič zapísané' : 'V tento deň nie je nič zapísané'}</b><br>Ťukni dole na ＋ a zapíš jedlo alebo ťažkosti.</p></div>`;
     }
+    h += ideasHtml(d, list);
     if (isToday) h += weekHtml();
     h += missHtml(d, list);
     h += dayCardHtml(d);

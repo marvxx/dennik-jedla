@@ -3,6 +3,8 @@
   // Voda sa počíta v pohároch za deň (days[d].glasses). Káva sa zapisuje ako jedlo s časom,
   // aby sa dala vyhodnotiť ako ostatné jedlá (napr. „káva ako prvé v daný deň“).
   const WATER_GOAL = 6;
+  const GLASS_L = 0.25;   // jeden dielik = pohár 2,5 dl
+  const liters = g => String(Math.round(g * GLASS_L * 100) / 100).replace('.', ',') + ' l';
   const isCoffee = e => e.type === 'food' && Analysis.mealTags(e).includes('kava');
 
   // najčastejšie zapisovaná káva (napr. „káva s mliekom“), inak len „káva“
@@ -13,15 +15,16 @@
     return top ? top[0] : 'káva';
   }
 
+  let waterBump = false;   // číslo krátko poskočí po ťuknutí
   function drinkHtml(d, list) {
     const g = (days[d] && days[d].glasses) || 0;
     const cups = list.filter(isCoffee).length;
     const drops = [...Array(Math.max(WATER_GOAL, g))].map((_, i) => `<i class="${i < g ? 'on' : ''}"></i>`).join('');
     return `<div class="drink">
       <div class="dr-row"><span class="dr-ico water">${ic('drop')}</span>
-        <span class="dr-txt"><b>Voda</b><small>${g} ${g === 1 ? 'pohár' : g >= 2 && g <= 4 ? 'poháre' : 'pohárov'}${g < WATER_GOAL ? ' · cieľ ' + WATER_GOAL : ' ✓'}</small><span class="drops">${drops}</span></span>
-        <button type="button" class="dr-btn minus" data-act="water" data-v="-1" data-date="${d}" aria-label="Ubrať pohár"${g ? '' : ' disabled'}>−</button>
-        <button type="button" class="dr-btn" data-act="water" data-v="1" data-date="${d}" aria-label="Pridať pohár">＋</button></div>
+        <span class="dr-txt"><b>Voda</b><small><span class="w-l${waterBump ? ' bump' : ''}">${liters(g)}</span>${g < WATER_GOAL ? ' · cieľ ' + liters(WATER_GOAL) : ' ✓'}</small><span class="drops">${drops}</span></span>
+        <button type="button" class="dr-btn minus" data-act="water" data-v="-1" data-date="${d}" aria-label="Ubrať 0,25 l"${g ? '' : ' disabled'}>−</button>
+        <button type="button" class="dr-btn" data-act="water" data-v="1" data-date="${d}" aria-label="Pridať 0,25 l">＋</button></div>
       <div class="dr-row"><span class="dr-ico coffee">${ic('cup')}</span>
         <span class="dr-txt"><b>Káva</b><small>${cups ? cups + '× · ' : ''}${esc(usualCoffee())}</small></span>
         <button type="button" class="dr-btn" data-act="coffee" data-date="${d}" aria-label="Zapísať kávu">＋</button></div></div>`;

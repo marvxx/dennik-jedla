@@ -139,6 +139,9 @@
     const tr = t.closest('[data-trace]');
     if (tr) { openTrace(tr.dataset.trace); return; }
 
+    const lf = t.closest('[data-lf]');
+    if (lf) { listFilter = lf.dataset.lf; listDays = 14; renderList(); return; }
+
     const cd = t.closest('[data-cal]');
     if (cd) { todayExpanded = false; goDay(cd.dataset.cal); return; }
 
@@ -193,7 +196,9 @@
       case 'delete': deleteCurrent(); break;
       case 'water': {
         await addWater(act.dataset.date, Number(act.dataset.v));
+        waterBump = true;
         renderToday();
+        waterBump = false;
         break;
       }
       case 'coffee': {
@@ -225,6 +230,15 @@
         renderForm();
         break;
       }
+      case 'eat-idea': {
+        // návrh „Čo si dať“: formulár s týmto jedlom, skupinami a miestom z posledného zápisu
+        const val = act.dataset.idea;
+        openEntry();
+        const src = entries.filter(e => e.type === 'food' && (e.desc || '').trim().toLowerCase() === val.toLowerCase()).sort((a, b) => b.ts - a.ts)[0];
+        applyQuick(val, src);
+        renderForm();   // bez „Ako včera“, jedlo je už vybraté
+        break;
+      }
       case 'add-at': {
         // zabudnuté jedlo: formulár s časom typického jedla v tom dni
         openEntry();
@@ -232,6 +246,8 @@
         draft.tsTouched = true;
         draft.tsCustom = true;
         renderForm();
+        // kurzor do popisu ako pri ＋ (ešte v rámci ťuknutia, inak iPhone neukáže klávesnicu)
+        { const d = $('#f-desc'); if (d) d.focus({ preventScroll: true }); }
         break;
       }
       case 'rec-log': {
