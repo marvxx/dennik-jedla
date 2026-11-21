@@ -126,6 +126,22 @@
     for (const k of Object.keys(TAG_WORDS)) if (k.startsWith('c_')) delete TAG_WORDS[k];
     for (const c of list || []) if (c && c.id && c.words && c.words.length) TAG_WORDS[c.id] = c.words.slice();
   }
+  // Moje jedlá: [{name: 'mamine halušky', ingredients: 'halušky, bryndza, slanina'}]
+  // Keď popis obsahuje názov jedla, počítajú sa aj jeho suroviny.
+  let RECIPES = [];
+  function setRecipes(list) {
+    RECIPES = (list || []).filter(r => r && r.name && r.ingredients)
+      .map(r => ({ n: norm(String(r.name).toLowerCase()).trim(), ing: String(r.ingredients) }));
+  }
+  function recipeOf(desc) {
+    const d = norm(String(desc || '').toLowerCase());
+    return RECIPES.filter(r => r.n && d.includes(r.n));
+  }
+  function expand(desc) {
+    const r = recipeOf(desc);
+    return r.length ? desc + ', ' + r.map(x => x.ing).join(', ') : String(desc || '');
+  }
+
   // Z názvu („paradajky, paprika“) urobí začiatky slov na rozpoznávanie
   function wordsFor(label) {
     const out = [];
@@ -157,14 +173,15 @@
 
   /** Skupiny jedla = ručne označené + rozpoznané z popisu – ručne vypnuté */
   function mealTags(e) {
-    const s = new Set((e.tags || []).concat(detectTags(e.desc)));
+    const s = new Set((e.tags || []).concat(detectTags(expand(e.desc))));
     (e.noTags || []).forEach(t => s.delete(t));
     // zmazaná vlastná skupina sa už neráta
     return [...s].filter(t => !t.startsWith('c_') || TAG_WORDS[t]);
   }
 
+  // deň sa začína o 4:00 (rovnako ako v app.js), neskorá večera patrí k predošlému dňu
   function localDate(ts) {
-    const d = new Date(ts);
+    const d = new Date(ts - 4 * HOUR);
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
@@ -246,7 +263,7 @@
       totalN++;
       if (hit) totalHit++;
       const seenK = new Set();
-      for (const x of words(m.desc)) {
+      for (const x of words(expand(m.desc))) {
         if (!x.k || seenK.has(x.k)) continue;
         seenK.add(x.k);
         bump(foodStats, x.k, x.prep ? x.prep + ' ' + x.w : x.w, hit);
@@ -352,9 +369,12 @@
     const today = localDate(now);
     // dnešok ešte nie je ukončený, preto ho vynecháme
     const dayList = Object.entries(days).filter(([d, v]) => v && d < today);
+    const phase = cyclePhases(days);
     const dayFactorDefs = [
       ['sleep:zle', v => v.sleep === 'zle'],
       ['period', v => v.period === true],
+      ['cyc:lut', (v, d) => phase[d] === 'lut'],
+      ['cyc:fol', (v, d) => phase[d] === 'fol'],
       ['activity:ziadny', v => v.activity === 'ziadny'],
       ['water:malo', v => v.water === 'malo'],
     ];
@@ -362,7 +382,7 @@
     const dHit = dayList.filter(([d]) => symDays.has(d)).length;
     const dayReady = [], dayPending = [];
     for (const [key, test] of dayFactorDefs) {
-      const withDays = dayList.filter(([, v]) => test(v));
+      const withDays = dayList.filter(([d, v]) => test(v, d));
       const wN = withDays.length;
       const wHit = withDays.filter(([d]) => symDays.has(d)).length;
       if (wN >= minN && dTotal - wN >= 1) dayReady.push(summarize(key, key, wN, wHit, dTotal, dHit, 'day'));
@@ -402,6 +422,39 @@
     };
   }
 
+  // Fázy cyklu podľa zapísanej menštruácie: 'men' (menštruácia), 'fol' (po nej do ovulácie),
+  // 'lut' (posledných 14 dní pred ďalšou). Dĺžka cyklu z údajov, inak 28 dní.
+  function cyclePhases(days) {
+    const ds = Object.keys(days || {}).sort();
+    const isP = d => days[d] && days[d].period === true;
+    const prevDay = d => { const [y, m, dd] = d.split('-').map(Number); const x = new Date(y, m - 1, dd - 1); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const starts = ds.filter(d => isP(d) && !isP(prevDay(d)));
+    const out = {};
+    if (!starts.length) return out;
+    const toT = d => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).getTime(); };
+    const lens = [];
+    for (let i = 1; i < starts.length; i++) { const L = Math.round((toT(starts[i]) - toT(starts[i - 1])) / 864e5); if (L >= 20 && L <= 40) lens.push(L); }
+    const avg = lens.length ? Math.round(lens.reduce((a, b) => a + b, 0) / lens.length) : 28;
+    for (const d of ds) {
+      const t = toT(d);
+      let si = -1;
+      for (let i = 0; i < starts.length; i++) if (toT(starts[i]) <= t) si = i;
+      if (si < 0) {
+        // dni pred prvou zapísanou menštruáciou: ak je do nej najviac 14 dní, je to luteálna fáza
+        const until = Math.round((toT(starts[0]) - t) / 864e5);
+        if (until >= 1 && until <= 14) out[d] = 'lut';
+        continue;
+      }
+      const day = Math.round((t - toT(starts[si])) / 864e5);
+      const next = si + 1 < starts.length ? Math.round((toT(starts[si + 1]) - toT(starts[si])) / 864e5) : avg;
+      if (day >= next + 7) continue;   // príliš ďaleko od známeho cyklu
+      if (isP(d) || day < 5) out[d] = 'men';
+      else if (day >= next - 14) out[d] = 'lut';
+      else out[d] = 'fol';
+    }
+    return out;
+  }
+
   // Najhoršie a najlepšie dni: čo sa jedlo len v jedných a nie v druhých
   function bestWorst(entries, days, now) {
     days = days || {};
@@ -424,7 +477,7 @@
         const seen = new Map();
         for (const e of foods[d]) {
           for (const t of mealTags(e)) seen.set('tag:' + t, t);
-          for (const [k, w] of tokenize(e.desc)) seen.set('w:' + k, BASE[k] || w);
+          for (const [k, w] of tokenize(expand(e.desc))) seen.set('w:' + k, BASE[k] || w);
         }
         for (const [k, l] of seen) { const r = m.get(k) || { key: k, label: l, n: 0 }; r.n++; m.set(k, r); }
       }
@@ -442,7 +495,7 @@
     if (m) return e => mealTags(e).includes(m[2]);
     if (key.includes(':')) return null;   // okolnosti (zhon, pauza…) nemajú vlastné jedlá
     const ks = key.split('+');
-    return e => { const t = new Set(tokenize(e.desc).map(x => x[0])); return ks.every(x => t.has(x)); };
+    return e => { const t = new Set(tokenize(expand(e.desc)).map(x => x[0])); return ks.every(x => t.has(x)); };
   }
 
   // Dôkazy k jednému výsledku: kedy po jedle prišli ťažkosti a zoznam konkrétnych jedál
@@ -487,7 +540,7 @@
     return { buckets: DELAY_BUCKETS, mine: M, rest: R, peak, list };
   }
 
-  const api = { analyze, bestWorst, evidence, matcher, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
+  const api = { analyze, bestWorst, evidence, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);

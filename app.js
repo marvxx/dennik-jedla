@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.1';
+  const APP_VERSION = '3.2';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -67,6 +67,7 @@
     'rushed': 'jedlo v zhone', 'portion:velka': 'veľká porcia',
     'stress:high': 'stres 4–5 pri jedle', 'mood:low': 'zlá nálada pri jedle',
     'sleep:zle': 'zlý spánok', 'period': 'menštruácia',
+    'cyc:lut': 'dni pred menštruáciou (luteálna fáza)', 'cyc:fol': 'dni po menštruácii (folikulárna fáza)',
     'activity:ziadny': 'deň bez pohybu', 'water:malo': 'málo pitia',
     'risk': 'obsahuje moje rizikové suroviny',
     'risk&enzyme': 's enzýmom (laktáza…)', 'risk&away': 'mimo domu', 'risk&stress': 'pri strese 4–5',
@@ -83,7 +84,10 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
   const dateStr = ts => { const d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
-  const todayStr = () => dateStr(Date.now());
+  // Deň sa začína o 4:00: neskorá večera po polnoci patrí ešte k predošlému dňu
+  const DAY_START_H = 4;
+  const dayOf = ts => dateStr(ts - DAY_START_H * 3600e3);
+  const todayStr = () => dayOf(Date.now());
   const fmtTime = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
   const toLocalInput = ts => dateStr(ts) + 'T' + fmtTime(ts);
   const lab = (list, v) => { const f = list.find(x => x[0] === v); return f ? f[1] : ''; };
@@ -95,7 +99,7 @@
     const [y, m, d] = ds.split('-').map(Number);
     const dt = new Date(y, m - 1, d);
     if (ds === todayStr()) return 'Dnes';
-    if (ds === dateStr(Date.now() - DAY)) return 'Včera';
+    if (ds === dayOf(Date.now() - DAY)) return 'Včera';
     const yr = y !== new Date().getFullYear() ? ' ' + y : '';
     const wd = WEEKDAYS[dt.getDay()];
     return wd.charAt(0).toUpperCase() + wd.slice(1) + ' ' + d + '. ' + m + '.' + yr;
@@ -278,7 +282,7 @@
   let todayExpanded = false;
   let listDays = 14;
   let currentView = 'today';
-  let selDay = dateStr(Date.now());   // deň zobrazený na obrazovke Dnes
+  let selDay = dayOf(Date.now());   // deň zobrazený na obrazovke Dnes
   let followToday = true;             // po polnoci preskočí na nový deň
   let flashId = null;                 // práve uložený záznam (krátko sa zvýrazní)
   let openSheets = [];
@@ -287,12 +291,12 @@
     return {
       type: type || null, ts: Date.now(), tsTouched: false, desc: '', severity: null, duration: '',
       stool: null, stress: null, mood: null, note: '', portion: null, rushed: false,
-      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false, tsOff: 0, tsCustom: false, tagsAll: false, amount: '', product: null,
+      tags: [], noTags: [], kinds: [], location: null, place: null, enzyme: false, tsOff: 0, tsCustom: false, tagsAll: false, amount: '', product: null, rec: false,
     };
   }
 
   // Skupiny jedla v rozpracovanom zázname: ručne + automaticky rozpoznané – ručne vypnuté
-  function autoTags() { return Analysis.detectTags(draft.desc); }
+  function autoTags() { return Analysis.detectTags(Analysis.expand(draft.desc)); }
   function effectiveTags() {
     const s = new Set(draft.tags.concat(autoTags()));
     draft.noTags.forEach(t => s.delete(t));
@@ -314,10 +318,12 @@
     meta = {};
     m.forEach(x => { meta[x.key] = x.value; });
     syncCustomTags();
+    Analysis.setRecipes(recipes());
   }
 
   // Vlastné intolerancie sa správajú ako ostatné skupiny: rozpoznanie z popisu, štítky, výpočty
   const customTags = () => meta.customTags || [];
+  const recipes = () => meta.recipes || [];
   function syncCustomTags() {
     for (let i = TAGS.length - 1; i >= 0; i--) if (TAGS[i][0].startsWith('c_')) TAGS.splice(i, 1);
     customTags().forEach(c => {
@@ -580,7 +586,7 @@
   }
 
   function noSymBtn(d) {
-    if (entries.some(e => e.type === 'symptom' && dateStr(e.ts) === d)) return '';
+    if (entries.some(e => e.type === 'symptom' && dayOf(e.ts) === d)) return '';
     const on = days[d] && days[d].noSymptoms;
     const lbl = d === todayStr() ? 'Dnes bez ťažkostí' : 'Deň bez ťažkostí';
     return `<button type="button" class="btn block nosym${on ? ' on' : ''}" data-act="no-sym" data-date="${d}">${lbl}${on ? ' ✓' : ''}</button>`;
@@ -602,7 +608,7 @@
   function dayIndex() {
     const sev = {}, has = new Set();
     entries.forEach(e => {
-      const d = dateStr(e.ts);
+      const d = dayOf(e.ts);
       has.add(d);
       if (e.type === 'symptom') sev[d] = Math.max(sev[d] || 0, e.severity || 1);
     });
@@ -624,7 +630,7 @@
     const yr = dt.getFullYear() !== new Date().getFullYear() ? ' ' + dt.getFullYear() : '';
     const wd = WEEKDAYS[dt.getDay()];
     if (d === todayStr()) return ['Dnes', wd + ' ' + date];
-    if (d === dateStr(Date.now() - DAY)) return ['Včera', wd + ' ' + date];
+    if (d === dayOf(Date.now() - DAY)) return ['Včera', wd + ' ' + date];
     return [wd.charAt(0).toUpperCase() + wd.slice(1), date + yr];
   }
 
@@ -658,10 +664,11 @@
   // Stuha dňa: jedlá hore, ťažkosti dole, na spoločnej časovej osi
   function ribbonHtml(list, d) {
     const base = parseDay(d).getTime();
-    const minOf = ts => Math.max(0, Math.min(1440, (ts - base) / 60000));
-    let startH = 6;
-    list.forEach(e => { startH = Math.min(startH, Math.floor(minOf(e.ts) / 60)); });
-    const span = 1440 - startH * 60;
+    // deň trvá do 4:00 rána nasledujúceho dátumu
+    const minOf = ts => Math.max(0, Math.min(1440 + DAY_START_H * 60, (ts - base) / 60000));
+    let startH = 6, endH = 24;
+    list.forEach(e => { startH = Math.min(startH, Math.floor(minOf(e.ts) / 60)); endH = Math.max(endH, Math.ceil(minOf(e.ts) / 60)); });
+    const span = endH * 60 - startH * 60;
     const x = m => ((m - startH * 60) / span * 100).toFixed(1);
     let marks = '<div class="rb-line"></div>';
     list.forEach(e => {
@@ -721,12 +728,12 @@
   function renderToday() {
     const el = $('#view-today');
     const d = selDay, isToday = d === todayStr();
-    const list = entries.filter(e => dateStr(e.ts) === d).sort((a, b) => a.ts - b.ts);
+    const list = entries.filter(e => dayOf(e.ts) === d).sort((a, b) => a.ts - b.ts);
     const [title, sub] = dayTitle(d);
     let h = `<header class="lt"><div><h1>${title}</h1><p>${sub}</p></div>
       ${isToday ? '' : '<button type="button" class="btn small" data-act="go-today">Späť na dnes</button>'}</header>`;
     h += stripHtml();
-    if (isToday) h += bannerHtml() + testBannerHtml();
+    if (isToday) h += bannerHtml() + testBannerHtml() + reintroBannerHtml() + weekHtml();
     if (list.length) {
       h += ribbonHtml(list, d);
       h += '<div class="tl">' + list.map(entryRow).join('') + '</div>';
@@ -734,6 +741,7 @@
       h += `<div class="card empty"><div class="big"></div>
         <p><b>${isToday ? 'Dnes zatiaľ nič zapísané' : 'V tento deň nie je nič zapísané'}</b><br>Ťukni dole na ＋ a zapíš jedlo alebo ťažkosti.</p></div>`;
     }
+    h += quickToolsHtml(d, list);
     h += dayCardHtml(d);
     el.innerHTML = h;
     flashId = null;
@@ -741,20 +749,71 @@
     if (cur) strip.scrollLeft = cur.offsetLeft - strip.clientWidth / 2 + cur.offsetWidth / 2;
   }
 
+  // minúty od polnoci; rozdiel dvoch časov dňa (cez polnoc tiež)
+  const minOfDay = ts => { const d = new Date(ts); return d.getHours() * 60 + d.getMinutes(); };
+  const clockGap = (a, b) => { const x = Math.abs(minOfDay(a) - minOfDay(b)); return Math.min(x, 1440 - x); };
+
+  // Návrhy: čo sa jedáva často, nedávno a hlavne v túto dennú dobu (ráno raňajky, na obed obed)
+  // ---------- Rýchly zápis na obrazovke Dnes ----------
+  const recurring = () => meta.recurring || [];
+  const recKey = (type, desc) => type + ':' + String(desc || '').trim().toLowerCase();
+  const isRecurring = (type, desc) => recurring().some(r => recKey(r.type, r.desc) === recKey(type, desc));
+  // čas v danom dni (h = hodina s desatinami)
+  const atHour = (d, h) => parseDay(d).getTime() + h * 3600e3;
+  const MEAL_SLOTS = [['raňajky', 4, 10.5, 7.5], ['obed', 10.5, 15.5, 12.5], ['večera', 16.5, 22, 18.5]];
+
+  function quickToolsHtml(d, list) {
+    const isToday = d === todayStr();
+    const now = Date.now();
+    let h = '';
+    // pravidelné záznamy, ktoré dnes ešte nie sú zapísané a ich čas sa blíži alebo prešiel
+    if (isToday) {
+      const todayKeys = new Set(list.map(e => recKey(e.type, e.desc)));
+      const due = recurring().filter(r => !todayKeys.has(recKey(r.type, r.desc)) && now >= atHour(d, r.h + r.m / 60) - 30 * 60e3);
+      if (due.length) {
+        h += `<div class="card quick"><h3>Pravidelné</h3><div class="chips">` + due.map(r =>
+          `<button type="button" class="chip rec" data-act="rec-log" data-id="${r.id}"><span class="tico ${r.type}">${TYPES[r.type].ico}</span> ${esc(r.desc)} <span class="tiny">${pad(r.h)}:${pad(r.m)}</span></button>`).join('') +
+          '</div><p class="tiny" style="margin:8px 0 0">Ťuknutím zapíšeš.</p></div>';
+      }
+    }
+    // zabudnuté jedlo: len v dňoch, keď sa niečo zapisovalo, a len za čas, ktorý už prešiel
+    const food = list.filter(e => e.type === 'food');
+    if (food.length || (isToday && list.length)) {
+      const nowH = isToday ? (now - parseDay(d).getTime()) / 3600e3 : 99;
+      const miss = MEAL_SLOTS.filter(([, a, b]) => nowH >= b && !food.some(e => {
+        const x = (e.ts - parseDay(d).getTime()) / 3600e3;
+        return x >= a && x < b;
+      }));
+      if (miss.length && miss.length < 3) {
+        h += `<div class="card quick miss"><span>${miss.length === 1 ? 'Chýba ' + miss[0][0] + '?' : 'Chýbajú ' + miss.map(m => m[0]).join(' a ') + '?'}</span><div class="chips">` +
+          miss.map(([n, , , at]) => `<button type="button" class="chip" data-act="add-at" data-h="${at}">＋ ${n}</button>`).join('') + '</div></div>';
+      }
+    }
+    // rýchly zápis ťažkostí jedným ťuknutím
+    if (isToday) {
+      h += `<div class="card quick"><h3>Máš teraz ťažkosti?</h3><div class="chips sevrow">` +
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button type="button" class="chip sev-${n}" data-act="quick-sym" data-v="${n}" style="--sc:${sevColor(n)}">${n}</button>`).join('') +
+        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div></div>';
+    }
+    return h;
+  }
+
   function quickFor(type) {
     const m = new Map();
     const now = Date.now();
+    const at = draft && draft.ts ? draft.ts : now;
     for (const e of entries) {
       if (e.type !== type || !e.desc) continue;
       const text = e.desc.trim();
       const k = text.toLowerCase();
-      const r = m.get(k) || { text, n: 0, last: 0 };
+      const r = m.get(k) || { text, n: 0, last: 0, near: 0 };
       r.n++;
+      if (clockGap(e.ts, at) <= 120) r.near++;
       r.last = Math.max(r.last, e.ts);
       m.set(k, r);
     }
     const list = [...m.values()]
-      .map(r => ({ ...r, score: r.n + (now - r.last < 3 * DAY ? 2 : 0) }))
+      .map(r => ({ ...r, score: r.n + r.near * 2 + (now - r.last < 3 * DAY ? 2 : 0) }))
       .sort((a, b) => b.score - a.score || b.last - a.last)
       .map(r => r.text);
     if (type === 'med') MED_DEFAULTS.forEach(d => { if (!list.some(x => x.toLowerCase() === d.toLowerCase())) list.push(d); });
@@ -776,8 +835,13 @@
     const chipsHtml = favs.map((f, i) => `<button type="button" class="chip fav" data-fav="${i}">★ ${esc(f.desc)}</button>`).join('') +
       q.map(t => `<button type="button" class="chip" data-q="${esc(t)}">${esc(t)}</button>`).join('');
     const n = favs.length + q.length;
-    const quick = chipsHtml ? `<details class="quick-dd"${draft.quickOpen ? ' open' : ''}><summary>Naposledy ${isFood ? 'jedené' : 'zapísané'} <span>${n}</span></summary>
-      <div class="chips quick">${chipsHtml}</div><p class="tiny" style="margin:8px 0 0">Ťukni na viac položiek, pridajú sa za seba. Opätovným ťuknutím položku odoberieš.</p></details>` : '';
+    // „Ako včera“: čo bolo zapísané včera v podobnom čase (±2,5 h)
+    const yd = dayOf(draft.ts - DAY);
+    const yest = editingId ? null : entries.filter(e => e.type === draft.type && e.desc && dayOf(e.ts) === yd && clockGap(e.ts, draft.ts) <= 150)
+      .sort((a, b) => clockGap(a.ts, draft.ts) - clockGap(b.ts, draft.ts))[0];
+    const again = yest && !draft.desc ? `<button type="button" class="chip again" data-q="${esc(yest.desc.trim())}"><span class="tiny">Ako včera</span> ${esc(yest.desc.trim())}</button>` : '';
+    const quick = (again ? `<div class="again-row">${again}</div>` : '') + (chipsHtml ? `<details class="quick-dd"${draft.quickOpen ? ' open' : ''}><summary>Naposledy ${isFood ? 'jedené' : 'zapísané'} <span>${n}</span></summary>
+      <div class="chips quick">${chipsHtml}</div><p class="tiny" style="margin:8px 0 0">Ťukni na viac položiek, pridajú sa za seba. Opätovným ťuknutím položku odoberieš.</p></details>` : '');
     const star = isFood ? `<button type="button" class="star${isFav(draft.desc) ? ' on' : ''}" id="fav-btn" data-act="fav" aria-label="Uložiť medzi obľúbené">${favBtnText()}</button>` : '';
     return grp('', `<div class="desc-row"><textarea id="f-desc" class="big" rows="1" placeholder="${esc(placeholder)}" enterkeyhint="done">${esc(draft.desc)}</textarea>${isFood ? `<span class="desc-btns">${star}<button type="button" class="star" data-act="scan" aria-label="Skenovať čiarový kód">${ic('scan')}</button></span>` : ''}</div>${quick}`);
   }
@@ -896,12 +960,20 @@
     return h;
   }
 
+  // ak je popis jedno z Mojich jedál, ukáže jeho suroviny
+  function recipeHint() {
+    const r = Analysis.recipeOf(draft.desc);
+    return r.length ? 'Z Mojich jedál: <b>' + esc(r.map(x => x.ing).join(', ')) + '</b>' : '';
+  }
+
   function refreshFoodExtras() {
     if (draft.type !== 'food') return;
     const tc = $('#tag-chips');
     if (tc) tc.outerHTML = tagChips();
     const rw = $('#risk-warn');
     if (rw) rw.innerHTML = riskWarnHtml();
+    const rh = $('#rc-hint');
+    if (rh) rh.innerHTML = recipeHint();
     const fb = $('#fav-btn');
     if (fb) { fb.textContent = favBtnText(); fb.classList.toggle('on', isFav(draft.desc)); }
   }
@@ -946,7 +1018,7 @@
     const chip = (m, l) => `<button type="button" class="chip${!custom && draft.tsOff === m ? ' on' : ''}" data-time="${m}">${l}</button>`;
     return grp('Kedy?', `<div class="time-row">${chip(0, 'teraz')}${chip(30, '−30 min')}${chip(60, '−1 h')}${chip(120, '−2 h')}</div>
       <div class="dt-row">
-        <label>Iný dátum<input type="date" id="f-date" value="${dateStr(draft.ts)}" max="${todayStr()}"></label>
+        <label>Iný dátum<input type="date" id="f-date" value="${dateStr(draft.ts)}" max="${dateStr(Date.now())}"></label>
         <label>Iný čas<input type="time" id="f-time" value="${fmtTime(draft.ts)}"></label>
       </div>`);
   }
@@ -1043,7 +1115,8 @@
       h += grp('Koľko?', chipGroup('portion', PORTION, { cls: 'seg' }) +
         `<input type="text" id="f-amount" style="margin-top:10px" value="${esc(draft.amount)}" placeholder="presnejšie, napr. pol balenia, 5 ks" enterkeyhint="done">` +
         (draft.product && draft.product.quantity ? `<p class="tiny" style="margin:6px 0 0">Celé balenie: ${esc(draft.product.quantity)}</p>` : ''));
-      h += grp('Obsahovalo', tagChips() + '<p class="tiny" style="margin:8px 0 0">✦ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>');
+      h += grp('Obsahovalo', tagChips() + `<p class="tiny" id="rc-hint" style="margin:8px 0 0">${recipeHint()}</p>` +
+        '<p class="tiny" style="margin:8px 0 0">✦ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>');
       h += grp('', sw('f-enzyme', 'Užila som laktázu / enzým', draft.enzyme) + sw('f-rushed', 'Jedla som v zhone', draft.rushed));
       h += grp('Kde?', chipGroup('place', PLACES, {}));
     } else if (t === 'symptom') {
@@ -1064,8 +1137,14 @@
       h += descField('Aký liek alebo čo iné?');
       h += timeField();
     }
+    if (t === 'food' || t === 'med') h += grp('', sw('f-rec', 'Opakovať každý deň o ' + fmtTime(draft.ts), draft.rec) +
+      '<p class="tiny" style="margin:6px 0 0">Na obrazovke Dnes sa potom ukáže na zápis jedným ťuknutím.</p>');
     h += moreBlock();
 
+    // pri úprave jedla či lieku: jedným ťuknutím zapísať to isté znova, teraz
+    if (editingId && (t === 'food' || t === 'med')) {
+      h += `<button type="button" class="btn block again-now" data-act="dup-now">${ic('open')} Zapísať znova teraz</button>`;
+    }
     h += `<div class="savebar">
       ${editingId ? '<button type="button" class="btn danger" data-act="delete">Zmazať</button>' : ''}
       <button type="submit" class="btn primary">${editingId ? 'Uložiť zmeny' : 'Uložiť'}</button>
@@ -1125,8 +1204,15 @@
     if (old) entries[entries.indexOf(old)] = e; else entries.push(e);
     if (!meta.firstUse) await setMeta('firstUse', Date.now());
     if (type === 'food') await rememberProduct(e);
+    // pravidelný záznam: pridať, posunúť čas alebo (pri úprave) zrušiť
+    if (type === 'food' || type === 'med') {
+      const key = recKey(type, desc), dt = new Date(e.ts);
+      const rest = recurring().filter(r => recKey(r.type, r.desc) !== key);
+      if (d.rec) await setMeta('recurring', rest.concat([{ id: uid(), type, desc, h: dt.getHours(), m: dt.getMinutes(), portion: e.portion || null, tags: e.tags || [], noTags: e.noTags || [] }]));
+      else if (editingId && rest.length !== recurring().length) await setMeta('recurring', rest);
+    }
     // ťažkosti v deň označený „bez ťažkostí“ → zrušiť označenie
-    const dd = days[dateStr(e.ts)];
+    const dd = days[dayOf(e.ts)];
     if (type === 'symptom' && dd && dd.noSymptoms) { delete dd.noSymptoms; await DB.put('days', dd); }
 
     const wasEditing = !!editingId;
@@ -1135,7 +1221,7 @@
     closeSheet('entry-sheet');
     flashId = e.id;
     showDone();
-    if (currentView === 'today') { selDay = dateStr(e.ts); followToday = selDay === todayStr(); }
+    if (currentView === 'today') { selDay = dayOf(e.ts); followToday = selDay === todayStr(); }
     render();
     const fresh = $('.entry.flash');
     if (fresh) fresh.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1189,6 +1275,7 @@
     draft.enzyme = !!draft.enzyme;
     draft.amount = draft.amount || '';
     draft.product = draft.product || null;
+    draft.rec = isRecurring(e.type, e.desc);
     renderForm();
     openSheet('entry-sheet');
   }
@@ -1254,7 +1341,7 @@
       <input type="search" id="q" value="${esc(searchQ)}" placeholder="Hľadať v denníku, napr. jogurt" enterkeyhint="search"><div id="q-res"></div>` + renderCalendar();
     const byDay = new Map();
     entries.forEach(e => {
-      const d = dateStr(e.ts);
+      const d = dayOf(e.ts);
       if (!byDay.has(d)) byDay.set(d, []);
       byDay.get(d).push(e);
     });
@@ -1288,8 +1375,8 @@
       e.type === 'food' ? Analysis.mealTags(e).map(tagLabel).join(' ') : ''].join(' ')).includes(q)).sort((a, b) => b.ts - a.ts);
     box.innerHTML = hits.length
       ? `<p class="tiny" style="margin:0 4px 6px">Nájdené: ${hits.length}×</p><div class="dayrows">` + hits.slice(0, 40).map(e =>
-        `<button type="button" class="dayrow fnd" data-cal="${dateStr(e.ts)}"><span>${TYPES[e.type].ico}</span>
-          <span><b>${esc(e.desc)}</b><small>${fmtDayHead(dateStr(e.ts))} o ${fmtTime(e.ts)}</small></span><span></span><span class="chev">›</span></button>`).join('') + '</div>'
+        `<button type="button" class="dayrow fnd" data-cal="${dayOf(e.ts)}"><span>${TYPES[e.type].ico}</span>
+          <span><b>${esc(e.desc)}</b><small>${fmtDayHead(dayOf(e.ts))} o ${fmtTime(e.ts)}</small></span><span></span><span class="chev">›</span></button>`).join('') + '</div>'
       : '<p class="muted small" style="margin:0 4px 14px">Nič sa nenašlo.</p>';
   }
 
@@ -1315,13 +1402,13 @@
     });
     const sumTags = Object.entries(tagCount).sort((a, b) => (risk.includes(b[0]) - risk.includes(a[0])) || b[1] - a[1]);
     let h = `<div class="sheet-head"><h2>Čo predchádzalo</h2><button type="button" class="x" data-act="trace-close" aria-label="Zavrieť">✕</button></div>
-      <p class="small muted" style="margin-top:-6px">${esc(s.desc)}${s.severity ? ' · sila ' + s.severity + '/10' : ''} · ${fmtDayHead(dateStr(s.ts))} ${fmtTime(s.ts)}</p>`;
+      <p class="small muted" style="margin-top:-6px">${esc(s.desc)}${s.severity ? ' · sila ' + s.severity + '/10' : ''} · ${fmtDayHead(dayOf(s.ts))} ${fmtTime(s.ts)}</p>`;
     if (sumTags.length) {
       h += `<div class="trace-sum"><b>Za posledných 48 h:</b><div class="pending" style="margin-top:6px">` +
         sumTags.map(([t, n]) => `<span class="${risk.includes(t) ? 'risk' : ''}">${esc(tagLabel(t))} ${n}×</span>`).join('') +
         (away ? `<span>mimo domu ${away}×</span>` : '') + '</div></div>';
     }
-    const dset = [...new Set([dateStr(s.ts), dateStr(s.ts - 864e5), dateStr(from)])];
+    const dset = [...new Set([dayOf(s.ts), dayOf(s.ts - 864e5), dayOf(from)])];
     const dinfo = dset.map(d => days[d] && dayText(days[d]) ? `<div class="tiny">${fmtDayHead(d)}: ${esc(dayText(days[d]))}</div>` : '').join('');
     if (dinfo) h += `<div style="margin:8px 0">${dinfo}</div>`;
     if (!prior.length) h += '<p class="muted">Za posledných 48 hodín nie je nič zapísané.</p>';
@@ -1548,7 +1635,7 @@
         const out = !x.ripe && x.delay == null ? ['wait', 'čaká sa'] : x.delay != null && x.delay < 24
           ? [x.delay <= win ? 'hit' : 'wait', 'ťažkosti ' + after(x.delay) + (x.sev ? ' · ' + x.sev + '/10' : '')]
           : x.known ? ['ok', 'bez ťažkostí'] : ['wait', 'deň nezapísaný'];
-        return `<button type="button" class="ev" data-goday="${dateStr(x.ts)}"><span class="ev-t">${esc(x.desc)}<small>${fmtDayHead(dateStr(x.ts))} · ${fmtTime(x.ts)}</small></span>
+        return `<button type="button" class="ev" data-goday="${dayOf(x.ts)}"><span class="ev-t">${esc(x.desc)}<small>${fmtDayHead(dayOf(x.ts))} · ${fmtTime(x.ts)}</small></span>
           <span class="ev-o ${out[0]}">${out[1]}</span></button>`;
       }).join('') + '</div>' + (ev.list.length > 15 ? `<p class="tiny" style="margin:8px 0 0">a ďalších ${ev.list.length - 15} starších</p>` : ''));
     }
@@ -1620,10 +1707,14 @@
     const list = findings().filter(x => x.id !== f.id);
     list.unshift(f);
     await setMeta('findings', list);
+    const wasTest = fDraft.fromTest ? meta.test : null;
     if (fDraft.fromTest) await setMeta('test', null);
+    if (fDraft.fromReintro) await setMeta('reintro', null);
     closeSheet('mini-sheet');
-    toast('Zistenie uložené ✓');
     render();
+    // po teste, kde bolo bez toho lepšie, je ďalší krok opätovné zavedenie
+    if (wasTest && f.status === 'bad' && !meta.reintro) toast('Zistenie uložené ✓', { label: 'Zaviesť späť', run: () => openReintroNew({ text: wasTest.what, tag: wasTest.tag }) });
+    else toast('Zistenie uložené ✓');
   }
 
   // ---------- Test podozrivého ----------
@@ -1634,7 +1725,7 @@
     const day0 = parseDay(todayStr()).getTime();
     const passed = Math.round((day0 - t.start) / DAY);
     const elapsed = Math.max(1, Math.min(t.days, passed + 1));
-    const symDays = new Set(entries.filter(e => e.type === 'symptom').map(e => dateStr(e.ts)));
+    const symDays = new Set(entries.filter(e => e.type === 'symptom').map(e => dayOf(e.ts)));
     const cnt = from => { let c = 0; for (let i = 0; i < elapsed; i++) if (symDays.has(dateStr(from + i * DAY + 12 * 3600e3))) c++; return c; };
     const slips = t.tag ? entries.filter(e => e.type === 'food' && e.ts >= t.start && Analysis.mealTags(e).includes(t.tag)).length : 0;
     return { t, elapsed, during: cnt(t.start), before: cnt(t.start - elapsed * DAY), slips, done: passed >= t.days };
@@ -1672,6 +1763,145 @@
       grp('Ako dlho?', '<div class="chips seg">' + [7, 14, 21].map(n => `<button type="button" class="chip${n === 14 ? ' on' : ''}" data-td="${n}">${n} dní</button>`).join('') + '</div>') +
       '<p class="tiny" style="margin:0 4px 12px">Väčšie zmeny v strave a lieky vždy najprv preber s lekárom.</p>' +
       `<div class="savebar"><button type="button" class="btn primary" data-act="test-start">Začať dnes</button></div>`;
+    openSheet('mini-sheet');
+  }
+
+  // Spojený verdikt s aktuálnym nastavením výpočtu (pre Dnes a prehľad pre lekára)
+  function computeSuspects() {
+    const fromH = meta.fromH != null ? meta.fromH : 0, toH = meta.toH != null ? meta.toH : 6, minN = meta.minN || 5;
+    const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
+    if (r.totalN < 10 || r.symptomCount < 3) return [];
+    lastR = r;
+    const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
+    return buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null);
+  }
+
+  // ---------- Týždenný prehľad ----------
+  // V nedeľu večer, v pondelok a utorok ukáže zhrnutie posledného týždňa v porovnaní s predošlým.
+  function weekStats(endDay) {
+    const list = [];
+    for (let i = 0; i < 7; i++) list.push(dateStr(parseDay(endDay).getTime() - i * DAY + 12 * 3600e3));
+    const set = new Set(list);
+    const E = entries.filter(e => set.has(dayOf(e.ts)));
+    const sym = E.filter(e => e.type === 'symptom');
+    const symDays = new Set(sym.map(e => dayOf(e.ts)));
+    const logged = new Set(E.map(e => dayOf(e.ts)));
+    const known = list.filter(d => symDays.has(d) || (days[d] && days[d].noSymptoms)).length;
+    const sev = sym.map(e => e.severity).filter(x => x != null);
+    const risk = riskTags();
+    let riskN = 0;
+    E.filter(e => e.type === 'food').forEach(e => { if (Analysis.mealTags(e).some(t => risk.includes(t))) riskN++; });
+    return { symDays: symDays.size, logged: logged.size, known, avg: sev.length ? sev.reduce((a, b) => a + b, 0) / sev.length : null, riskN, food: E.filter(e => e.type === 'food').length };
+  }
+
+  function weekHtml() {
+    const now = new Date();
+    const wd = now.getDay(), hr = now.getHours();
+    if (!((wd === 0 && hr >= 17) || wd === 1 || wd === 2)) return '';
+    // týždeň končí v nedeľu: v nedeľu večer dnešok, inak posledná nedeľa
+    const back = wd === 0 ? 0 : wd;
+    const end = dateStr(parseDay(todayStr()).getTime() - back * DAY + 12 * 3600e3);
+    if (meta.weekSeen === end) return '';
+    const A = weekStats(end), B = weekStats(dateStr(parseDay(end).getTime() - 7 * DAY + 12 * 3600e3));
+    if (A.logged < 3) return '';
+    const cmp = B.logged >= 3 ? (A.symDays < B.symDays ? `o ${B.symDays - A.symDays} menej ako minulý týždeň` : A.symDays > B.symDays ? `o ${A.symDays - B.symDays} viac ako minulý týždeň` : 'rovnako ako minulý týždeň') : '';
+    let tip;
+    if (A.known < 5) tip = 'Pri ' + (7 - A.known) + ' dňoch nevieme, či boli bez ťažkostí. Ťukni večer na „Deň bez ťažkostí“, spresní to vyhodnotenie.';
+    else {
+      const top = computeSuspects()[0];
+      tip = top && top.score >= 2 ? `Najväčšie podozrenie zostáva ${top.name}. Podrobnosti sú v Súvislostiach.` : 'Zapisuj ďalej, údaje pribúdajú.';
+    }
+    const bar = n => `<span class="wk-bar"><i style="width:${Math.round(n / 7 * 100)}%"></i></span>`;
+    return `<div class="card week"><div class="res-top"><h3>Tvoj týždeň</h3><button type="button" class="x" data-act="week-hide" data-end="${end}" aria-label="Skryť">✕</button></div>
+      <div class="wk"><span>Dni s ťažkosťami</span>${bar(A.symDays)}<b>${A.symDays} zo 7</b></div>
+      ${cmp ? `<p class="tiny" style="margin:2px 0 8px">${cmp}</p>` : ''}
+      <div class="wk"><span>Dni so záznamom</span>${bar(A.logged)}<b>${A.logged} zo 7</b></div>
+      ${A.avg != null ? `<p class="small muted" style="margin:8px 0 0">Priemerná sila ťažkostí ${A.avg.toFixed(1).replace('.', ',')}/10${B.avg != null ? ' (minulý týždeň ' + B.avg.toFixed(1).replace('.', ',') + ')' : ''}.</p>` : ''}
+      ${riskTags().length ? `<p class="small muted" style="margin:4px 0 0">Jedlá s tvojimi rizikovými surovinami: ${A.riskN}×${B.logged >= 3 ? ' (minulý týždeň ' + B.riskN + '×)' : ''}.</p>` : ''}
+      <p class="small" style="margin:10px 0 0">${esc(tip)}</p></div>`;
+  }
+
+  // ---------- Opätovné zavedenie (po vzore Monash) ----------
+  // Po vynechaní sa podozrivá vec 3 dni za sebou zje v stúpajúcej dávke a sleduje sa, či a kedy prídu ťažkosti.
+  // [porcia, názov, koho/čo (zjedz …), po čom (prišli po …)]
+  const RI_DOSES = [['mala', 'malá porcia', 'malú porciu', 'malej porcii'], ['normalna', 'bežná porcia', 'bežnú porciu', 'bežnej porcii'], ['velka', 'väčšia porcia', 'väčšiu porciu', 'väčšej porcii']];
+  let riDraft = null;
+
+  function reintroInfo() {
+    const r = meta.reintro;
+    if (!r) return null;
+    const day = Math.floor((parseDay(todayStr()).getTime() - r.start) / DAY);   // 0, 1, 2 = dni dávok
+    const sym = entries.filter(e => e.type === 'symptom');
+    // ťažkosti do 24 h po každej zjedenej dávke
+    const res = r.doses.map((d, i) => {
+      if (!d.ts) return { i, eaten: false };
+      const after = sym.filter(e => e.ts >= d.ts && e.ts <= d.ts + 24 * 3600e3);
+      return { i, eaten: true, ts: d.ts, n: after.length, max: after.length ? Math.max(...after.map(e => e.severity || 1)) : 0,
+        delay: after.length ? (Math.min(...after.map(e => e.ts)) - d.ts) / 3600e3 : null };
+    });
+    // porovnanie: koľko dní s ťažkosťami bolo 14 dní pred začiatkom
+    const symDays = new Set(sym.map(e => dayOf(e.ts)));
+    let base = 0;
+    for (let i = 1; i <= 14; i++) if (symDays.has(dateStr(r.start - i * DAY + 12 * 3600e3))) base++;
+    const lastEaten = res.filter(x => x.eaten).pop();
+    const finished = day >= 4 || (res.every(x => x.eaten) && Date.now() - res[2].ts > 24 * 3600e3);
+    return { r, day, res, base, finished, todayDose: day >= 0 && day <= 2 ? day : -1, lastEaten };
+  }
+
+  // výsledok jednou vetou
+  function reintroVerdict(i) {
+    const bad = i.res.filter(x => x.eaten && x.max >= 4);
+    const mild = i.res.filter(x => x.eaten && x.n && x.max < 4);
+    if (!i.res.some(x => x.eaten)) return ['sus', 'Žiadna dávka nie je zapísaná.'];
+    if (!bad.length) return ['ok', mild.length ? 'Prišli len slabé ťažkosti. Zdá sa, že to znášaš dobre.' : 'Po žiadnej dávke neprišli ťažkosti. Zdá sa, že to znášaš dobre.'];
+    if (bad[0].i === 0) return ['bad', 'Ťažkosti prišli už po malej porcii. Vadí aj malé množstvo.'];
+    return ['bad', `Malú porciu si zniesla, ťažkosti prišli až po ${RI_DOSES[bad[0].i][3]}. Rozhoduje teda množstvo.`];
+  }
+
+  function reintroBannerHtml() {
+    const i = reintroInfo();
+    if (!i) return '';
+    if (i.finished) return `<div class="banner test"><div><b>Zavádzanie: ${esc(i.r.what)}</b>Hotovo. Výsledok nájdeš v Súvislostiach, časť Moje.</div></div>`;
+    if (i.todayDose < 0) return '';
+    const d = i.r.doses[i.todayDose];
+    if (d.ts) {
+      const h = (Date.now() - d.ts) / 3600e3;
+      return `<div class="banner test"><div><b>Zavádzanie: ${esc(i.r.what)} · deň ${i.todayDose + 1} z 3</b>${h < 8 ? 'Dávka zjedená. Ak prídu ťažkosti, zapíš ich hneď nižšie.' : 'Dnešná dávka je za tebou.'}</div></div>`;
+    }
+    return `<div class="banner test"><div><b>Zavádzanie: ${esc(i.r.what)} · deň ${i.todayDose + 1} z 3</b>Dnes zjedz <b>${RI_DOSES[i.todayDose][2]}</b>, ideálne na obed.</div>
+      <button type="button" class="btn small primary" data-act="ri-dose">Zjedla som</button></div>`;
+  }
+
+  function reintroHtml() {
+    const i = reintroInfo();
+    if (!i) {
+      return `<div class="card"><h2>Opätovné zavedenie</h2><p class="small muted" style="margin:0 0 10px">Keď bolo bez niečoho lepšie, overí sa to návratom:
+        3 dni po sebe malá, bežná a väčšia porcia. Ukáže, či to vadí a od akého množstva.</p>
+        <button type="button" class="btn small" data-act="ri-new">Začať zavádzanie</button></div>`;
+    }
+    const rows = i.res.map(x => `<div class="ri-row"><span>Deň ${x.i + 1} · ${RI_DOSES[x.i][1]}</span>${!x.eaten ? '<span class="ev-o wait">nezjedené</span>'
+      : x.n ? `<span class="ev-o ${x.max >= 4 ? 'hit' : 'wait'}">ťažkosti ${x.max}/10${x.delay != null ? ' o ' + Math.max(1, Math.round(x.delay)) + ' h' : ''}</span>`
+      : Date.now() - x.ts < 24 * 3600e3 ? '<span class="ev-o wait">sleduje sa</span>' : '<span class="ev-o ok">bez ťažkostí</span>'}</div>`).join('');
+    const vt = reintroVerdict(i)[1];
+    const showV = i.finished || i.res.some(x => x.eaten && x.max >= 4);
+    return `<div class="card"><h2>Zavádzanie: ${esc(i.r.what)}</h2>${rows}
+      <p class="tiny" style="margin:10px 0 0">Pred začiatkom: ťažkosti ${i.base} zo 14 dní.</p>
+      ${showV ? `<p class="small" style="margin:10px 0 0"><b>${vt}</b></p>` : '<p class="small muted" style="margin:10px 0 0">Ťažkosti sa sledujú 24 h po každej dávke.</p>'}
+      <div class="stack" style="margin-top:12px">${i.res.some(x => x.eaten) ? `<button type="button" class="btn small primary" data-act="ri-end">Ukončiť a zapísať výsledok</button>` : ''}
+        <button type="button" class="btn small ghost" data-act="ri-cancel">Zrušiť zavádzanie</button></div></div>`;
+  }
+
+  function openReintroNew(pre) {
+    pre = pre || {};
+    if (meta.test) { toast('Najprv ukonči prebiehajúci test.'); return; }
+    riDraft = { tag: pre.tag || null };
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Opätovné zavedenie</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
+      grp('Čo zavedieš späť?', '<div class="chips">' + TAGS.map(([v, e, t]) => `<button type="button" class="chip${v === riDraft.tag ? ' on' : ''}" data-rt="${v}">${esc(t)}</button>`).join('') + '</div>' +
+        `<input type="text" id="ri-text" style="margin-top:10px" value="${esc(pre.text || '')}" placeholder="alebo konkrétne jedlo, napr. mlieko" enterkeyhint="done">`) +
+      grp('Ako na to', `<ol class="steps small"><li>Deň 1: <b>malá porcia</b>, deň 2: <b>bežná</b>, deň 3: <b>väčšia</b>.</li>
+        <li>Inak jedz ako počas vynechania, nič ďalšie nové.</li><li>Ak prídu silné ťažkosti, ďalšiu dávku vynechaj.</li></ol>`) +
+      '<p class="tiny" style="margin:0 4px 12px">Pri alergii (vyrážky, opuch, dýchavičnosť) zavádzanie nerob a choď k lekárovi.</p>' +
+      `<div class="savebar"><button type="button" class="btn primary" data-act="ri-start">Začať dnes</button></div>`;
     openSheet('mini-sheet');
   }
 
@@ -1717,7 +1947,7 @@
     const note = `<p class="foot">Len pomôcka, nie diagnóza. Čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Jedlo ani lieky nevynechávaj bez dohody s lekárom.</p>`;
 
     if (insTab === 'mine') {
-      h += findingsHtml() + testHtml();
+      h += findingsHtml() + reintroHtml() + testHtml();
       h += `<div class="card"><h2>Prehľad pre lekára</h2><p class="small muted" style="margin:0 0 10px">Krátke zhrnutie posledných 30 dní na jednu stranu.</p>
         <button type="button" class="btn small" data-act="report">Otvoriť prehľad</button></div>`;
       h += `<div class="card"><h3>Ako čítať výsledky</h3><p class="small muted" style="margin:0">
@@ -1840,9 +2070,9 @@
     const now = Date.now();
     const from = Math.max(all[0].ts, now - 30 * DAY);
     const E = all.filter(e => e.ts >= from);
-    const dset = new Set(E.map(e => dateStr(e.ts)));
+    const dset = new Set(E.map(e => dayOf(e.ts)));
     const sym = E.filter(e => e.type === 'symptom');
-    const symDays = new Set(sym.map(e => dateStr(e.ts)));
+    const symDays = new Set(sym.map(e => dayOf(e.ts)));
     const top = (arr, n) => {
       const m = new Map();
       arr.filter(Boolean).forEach(x => m.set(x, (m.get(x) || 0) + 1));
@@ -1867,7 +2097,10 @@
     ].filter(Boolean) : ['Žiadne záznamy ťažkostí']]);
     S.push(['Stolica', [top(E.filter(e => e.type === 'stool').map(e => e.stool ? lab(STOOL, e.stool) : e.desc), 7)]]);
     S.push(['Známe intolerancie', [riskTags().map(t => tagLabel(t)).join(', ') || 'neuvedené']]);
-    S.push(['Po čom prichádzajú ťažkosti častejšie (do 6 h po jedle)', sus.length ? sus.map(line) : ['Zatiaľ nič výrazné alebo málo údajov']]);
+    const merged = computeSuspects().slice(0, 6);
+    S.push(['Podozrenia (spojené výpočty)', merged.length ? merged.map(m => `${m.name} – ${VERDICT_TXT[m.verdict].toLowerCase()}${m.top ? ', ' + susRatio(m) : ''}: ` +
+      m.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').map(g => sigSentence(g, m)).join(' ')) : ['Zatiaľ nič výrazné alebo málo údajov']]);
+    if (sus.length) S.push(['Po čom prichádzajú ťažkosti častejšie (do 6 h po jedle)', sus.map(line)]);
     const tol = toleratedList(r);
     if (tol.length) S.push(['Čo znáša dobre', [tol.map(x => resName(x) + ' (' + x.withHit + ' z ' + x.withN + ')').join(', ')]]);
     if (dayF.length) S.push(['Okolnosti dňa', dayF.map(x => `${resName(x)}: ťažkosti ${x.withHit} z ${x.withN} dní, inak ${x.outHit} z ${x.outN}`)]);
@@ -1881,11 +2114,46 @@
       '\n\nÚdaje zapísala pacientka sama. Súvislosti sú len časová zhoda, nie diagnóza.';
   }
 
+  // Grafy do prehľadu: sila ťažkostí po dňoch (30 dní) a stolica podľa Bristolskej škály
+  function reportCharts() {
+    const today = parseDay(todayStr()).getTime();
+    const ix = dayIndex();
+    const N = 30, W = 300, Hh = 90, bw = W / N;
+    let bars = '';
+    for (let i = 0; i < N; i++) {
+      const d = dateStr(today - (N - 1 - i) * DAY + 12 * 3600e3);
+      const sev = ix.sev[d], x = (i * bw + 1).toFixed(1);
+      if (sev) {
+        const h = (sev / 10 * (Hh - 14)).toFixed(1);
+        bars += `<rect x="${x}" y="${(Hh - 12 - h).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${h}" rx="1.5" fill="${sevColor(sev)}"><title>${fmtDayHead(d)}: ${sev}/10</title></rect>`;
+      } else if (days[d] && days[d].noSymptoms) {
+        bars += `<circle cx="${(i * bw + bw / 2).toFixed(1)}" cy="${Hh - 15}" r="2.2" fill="var(--food)"><title>${fmtDayHead(d)}: bez ťažkostí</title></circle>`;
+      }
+    }
+    const tick = (i, t) => `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${Hh - 1}" text-anchor="middle">${t}</text>`;
+    const d0 = new Date(today - (N - 1) * DAY), dm = new Date(today - 15 * DAY), d1 = new Date(today);
+    const lab = d => d.getDate() + '. ' + (d.getMonth() + 1) + '.';
+    let h = `<h3>Ťažkosti za posledných 30 dní</h3><svg class="rchart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Najsilnejšie ťažkosti v jednotlivých dňoch">
+      <line x1="0" y1="${Hh - 12}" x2="${W}" y2="${Hh - 12}" stroke="var(--line)"/>
+      <text x="0" y="8">10</text>${bars}${tick(0, lab(d0))}${tick(14, lab(dm))}${tick(N - 1, lab(d1))}</svg>
+      <p class="tiny" style="margin:2px 0 0">Stĺpec = najsilnejšie ťažkosti v ten deň (1–10). Zelená bodka = deň bez ťažkostí.</p>`;
+    const st = entries.filter(e => e.type === 'stool' && e.ts >= today - N * DAY && /^b[1-7]$/.test(e.stool || ''));
+    if (st.length >= 3) {
+      const cnt = [0, 0, 0, 0, 0, 0, 0];
+      st.forEach(e => { cnt[Number(e.stool[1]) - 1]++; });
+      const mx = Math.max(...cnt);
+      h += `<h3>Stolica (Bristolská škála, ${st.length}×)</h3><div class="bristol">` + cnt.map((n, i) =>
+        `<span>${i + 1}</span><span class="bbar"><i class="${i < 2 ? 'hard' : i < 4 ? 'ok' : 'soft'}" style="width:${mx ? Math.round(n / mx * 100) : 0}%"></i></span><span>${n}</span>`).join('') +
+        '</div><p class="tiny" style="margin:2px 0 0">1–2 zápcha, 3–4 v poriadku, 5–7 riedka.</p>';
+    }
+    return h;
+  }
+
   function openReport() {
     const S = buildReport();
     if (!S) { toast('Zatiaľ žiadne záznamy'); return; }
     $('#report-sheet').innerHTML = `<div class="sheet-head noprint"><h2>Prehľad pre lekára</h2><button type="button" class="x" data-act="report-close" aria-label="Zavrieť">✕</button></div>
-      <div class="report"><h1>Denník jedla a trávenia – prehľad</h1>` +
+      <div class="report"><h1>Denník jedla a trávenia – prehľad</h1>` + reportCharts() +
       S.map(([h, l]) => `<h3>${esc(h)}</h3><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`).join('') +
       `<p class="tiny">Údaje zapísala pacientka sama. Súvislosti sú len časová zhoda, nie diagnóza.</p></div>
       <div class="savebar noprint"><button type="button" class="btn" data-act="report-share">Zdieľať ako text</button>
@@ -1944,7 +2212,7 @@
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
     const settings = {};
-    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
     const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
@@ -1967,7 +2235,7 @@
     const rows = [head];
     [...entries].sort((a, b) => a.ts - b.ts).forEach(e => {
       const d = new Date(e.ts);
-      const day = days[dateStr(e.ts)] || {};
+      const day = days[dayOf(e.ts)] || {};
       rows.push([
         d.getDate() + '.' + (d.getMonth() + 1) + '.' + d.getFullYear(), fmtTime(e.ts), TYPES[e.type].csv, e.desc,
         e.severity != null ? e.severity : '', e.duration || '', e.stool ? lab(STOOL, e.stool) : '',
@@ -2000,7 +2268,7 @@
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
     if (data.settings && typeof data.settings === 'object') {
-      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test']) {
+      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro']) {
         if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
       }
     }
@@ -2034,6 +2302,8 @@
       <h2 class="sub">Moje jedlo</h2><div class="dayrows">
         ${srow('intol-edit', 'warn', 'sym', 'Moje intolerancie', esc(risk.join(', ')) || 'Zatiaľ nič vybrané', risk.length || '')}
         ${srow('favs', 'star', 'sun', 'Obľúbené jedlá', '', favorites().length || '')}
+        ${srow('recipes', 'doc', 'food', 'Moje jedlá', 'Jedlá rozpísané na suroviny', recipes().length || '')}
+        ${srow('rec-open', 'bell', 'med', 'Pravidelné záznamy', 'Napr. ranná káva, lieky', recurring().length || '')}
       </div>
       <h2 class="sub">Záloha</h2><div class="dayrows">
         ${srow('backup', 'save', 'accent', 'Uložiť zálohu', esc(lbTxt))}
@@ -2047,6 +2317,7 @@
       <h2 class="sub">Ostatné</h2><div class="dayrows">
         ${srow('rem-open', 'bell', 'sun', 'Večerná pripomienka', 'Udalosť do Kalendára v iPhone')}
         ${standalone ? '' : srow('install', 'phone', 'med', 'Pridať na plochu', 'Aby sa denník otváral ako aplikácia')}
+        ${srow('shortcut', 'open', 'accent', 'Skratky a Siri', 'Zápis jedným ťuknutím z plochy')}
         ${srow('wipe', 'trash', 'danger', 'Vymazať všetky údaje', entries.length + ' záznamov, ' + Object.keys(days).length + ' dní s údajmi', '', true)}
       </div>
       <p class="foot" style="text-align:center">Denník jedla ${APP_VERSION} · funguje aj bez internetu</p>
@@ -2061,6 +2332,21 @@
       body = grp('', favs.length ? '<div class="fav-list">' + favs.map((f, i) => `<div class="fav-row"><span>${esc(f.desc)}</span>
           <button type="button" class="btn ghost small" data-act="fav-del" data-i="${i}" aria-label="Odobrať">✕</button></div>`).join('') + '</div>'
         : '<p class="small muted" style="margin:0">Pri zápise jedla ťukni na hviezdičku vedľa názvu. Potom ho zapíšeš jedným ťuknutím.</p>');
+    } else if (kind === 'recipes') {
+      const list = recipes();
+      title = 'Moje jedlá';
+      body = grp('', '<p class="small muted" style="margin:0 0 12px">Jedlo, ktoré často varíš, rozpíš na suroviny. Keď ho potom zapíšeš len názvom, suroviny sa zarátajú do vyhodnotenia.</p>' +
+        `<input type="text" id="rc-name" placeholder="Názov, napr. mamine halušky" enterkeyhint="next">
+         <input type="text" id="rc-ing" style="margin-top:8px" placeholder="Suroviny, napr. halušky, bryndza, slanina" enterkeyhint="done">
+         <button type="button" class="btn block" style="margin-top:10px" data-act="rc-add">Pridať jedlo</button>`) +
+        (list.length ? grp('Uložené', '<div class="fav-list">' + list.map((r, i) => `<div class="fav-row"><span>${esc(r.name)}<br><span class="tiny">${esc(r.ingredients)}</span></span>
+          <button type="button" class="btn ghost small" data-act="rc-del" data-i="${i}" aria-label="Zmazať">✕</button></div>`).join('') + '</div>') : '');
+    } else if (kind === 'rec') {
+      const list = recurring();
+      title = 'Pravidelné záznamy';
+      body = grp('', list.length ? '<div class="fav-list">' + list.map(r => `<div class="fav-row"><span>${esc(r.desc)} <span class="tiny">${pad(r.h)}:${pad(r.m)}</span></span>
+          <button type="button" class="btn ghost small" data-act="rec-del" data-id="${r.id}" aria-label="Zrušiť">✕</button></div>`).join('') + '</div>'
+        : '<p class="small muted" style="margin:0">Pri zápise jedla alebo lieku zapni „Opakovať každý deň“. Napríklad ranná káva alebo večerné probiotiká.</p>');
     } else if (kind === 'rem') {
       title = 'Večerná pripomienka';
       body = grp('', `<p class="small muted" style="margin:0 0 12px">Aplikácia sama upozorniť nevie. Pripomienku ti však pridá do Kalendára v iPhone ako udalosť, ktorá sa opakuje každý deň.</p>
@@ -2070,6 +2356,16 @@
       title = 'Pridať na plochu';
       body = grp('', `<ol class="steps small"><li>Otvor túto stránku v <b>Safari</b>.</li><li>Ťukni na tlačidlo <b>Zdieľať</b> (štvorec so šípkou).</li>
         <li>Vyber <b>Pridať na plochu</b> a potvrď.</li><li>Odteraz otváraj denník len ikonou na ploche. Safari a ikona majú oddelené údaje.</li></ol>`);
+    }
+    if (kind === 'shortcut') {
+      title = 'Skratky a Siri';
+      const row = (ty, l) => `<div class="fav-row"><span>${l}<br><span class="tiny link-txt">${esc(appLink(ty))}</span></span>
+        <button type="button" class="btn ghost small" data-act="copy-link" data-ty="${ty}">Kopírovať</button></div>`;
+      body = grp('Android', '<p class="small muted" style="margin:0">Podrž prst na ikone denníka na ploche. Ponúkne Zapísať jedlo, ťažkosti alebo stolicu.</p>') +
+        grp('iPhone', `<ol class="steps small"><li>Otvor aplikáciu <b>Skratky</b> a ťukni na <b>＋</b>.</li><li>Pridaj akciu <b>Otvoriť URL</b> a vlož odkaz nižšie.</li>
+          <li>Skratku pomenuj, napr. „Zapíš jedlo“. Potom stačí povedať „Hej Siri, zapíš jedlo“ alebo ju dať na plochu.</li></ol>
+          <div class="fav-list" style="margin-top:10px">${row('food', 'Zapísať jedlo')}${row('symptom', 'Zapísať ťažkosti')}${row('stool', 'Zapísať stolicu')}</div>
+          <p class="tiny" style="margin:8px 0 0">Skratka otvorí denník v Safari. Ak používaš ikonu na ploche, údaje sú tam zvlášť, preto je pohodlnejší Android alebo zápis cez ikonu.</p>`);
     }
     $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>${title}</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>${body}
       <div class="savebar"><button type="button" class="btn primary" data-act="mini-close">Hotovo</button></div>`;
@@ -2196,6 +2492,13 @@
     const fs = t.closest('[data-fs]');
     if (fs) { fDraft.status = fs.dataset.fs; $$('[data-fs]').forEach(c => c.classList.toggle('on', c === fs)); return; }
 
+    const rt = t.closest('[data-rt]');
+    if (rt) {
+      riDraft.tag = riDraft.tag === rt.dataset.rt ? null : rt.dataset.rt;
+      $$('[data-rt]').forEach(c => c.classList.toggle('on', c.dataset.rt === riDraft.tag));
+      return;
+    }
+
     const tt = t.closest('[data-tt]');
     if (tt) {
       tDraft.tag = tDraft.tag === tt.dataset.tt ? null : tt.dataset.tt;
@@ -2260,6 +2563,68 @@
       case 'go-today': todayExpanded = false; goDay(todayStr()); break;
       case 'cancel-edit': cancelEntry(); break;
       case 'delete': deleteCurrent(); break;
+      case 'quick-sym': {
+        // ťažkosti jedným ťuknutím; podrobnosti sa dajú doplniť z oznamu
+        const sev = Number(act.dataset.v), now = Date.now();
+        const e = { id: uid(), type: 'symptom', ts: now, desc: 'ťažkosti', severity: sev, duration: '', kinds: [], location: null,
+          stress: null, mood: null, note: '', created: now, updated: now };
+        await DB.put('entries', e);
+        entries.push(e);
+        const dd = days[dayOf(now)];
+        if (dd && dd.noSymptoms) { delete dd.noSymptoms; await DB.put('days', dd); }
+        if (!meta.firstUse) await setMeta('firstUse', now);
+        buzz(sev >= 7 ? 15 : 10);
+        flashId = e.id;
+        render();
+        toast(`Zapísané: ťažkosti ${sev}/10`, { label: 'Doplniť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'add-at': {
+        // zabudnuté jedlo: formulár s časom typického jedla v tom dni
+        openEntry();
+        draft.ts = atHour(selDay, Number(act.dataset.h));
+        draft.tsTouched = true;
+        draft.tsCustom = true;
+        renderForm();
+        break;
+      }
+      case 'rec-log': {
+        const r = recurring().find(x => x.id === act.dataset.id);
+        if (!r) break;
+        const now = Date.now(), sched = atHour(todayStr(), r.h + r.m / 60);
+        const ts = now - sched > 3 * 3600e3 ? sched : now;
+        const e = { id: uid(), type: r.type, ts, desc: r.desc, stress: null, mood: null, note: '', created: now, updated: now };
+        if (r.type === 'food') Object.assign(e, { portion: r.portion || null, rushed: false, tags: r.tags || [], noTags: r.noTags || [], amount: '', product: null, place: null, enzyme: false });
+        await DB.put('entries', e);
+        entries.push(e);
+        flashId = e.id;
+        buzz();
+        render();
+        toast('Zapísané: ' + r.desc, { run: async () => { await DB.del('entries', e.id); entries = entries.filter(x => x.id !== e.id); render(); } });
+        break;
+      }
+      case 'rec-del': {
+        await setMeta('recurring', recurring().filter(x => x.id !== act.dataset.id));
+        openInfo('rec');
+        break;
+      }
+      case 'dup-now': {
+        const src = entries.find(e => e.id === editingId);
+        if (!src) break;
+        const now = Date.now();
+        const copy = Object.assign(JSON.parse(JSON.stringify(src)), { id: uid(), ts: now, created: now, updated: now });
+        await DB.put('entries', copy);
+        entries.push(copy);
+        editingId = null;
+        draft = newDraft();
+        closeSheet('entry-sheet');
+        flashId = copy.id;
+        showDone();
+        if (currentView === 'today') { selDay = todayStr(); followToday = true; }
+        render();
+        toast('Zapísané znova: ' + copy.desc);
+        break;
+      }
       case 'backup': doBackup(); break;
       case 'restore': $('#import-file').click(); break;
       case 'csv': doCsv(); break;
@@ -2303,9 +2668,35 @@
       case 'mini-close': closeSheet('mini-sheet'); break;
       case 'intol-edit': openIntol(); break;
       case 'favs': openInfo('favs'); break;
+      case 'rec-open': openInfo('rec'); break;
+      case 'recipes': openInfo('recipes'); break;
+      case 'rc-add': {
+        const name = $('#rc-name').value.trim(), ing = $('#rc-ing').value.trim();
+        if (name.length < 3 || !ing) { toast('Napíš názov aj suroviny'); break; }
+        if (recipes().some(r => r.name.toLowerCase() === name.toLowerCase())) { toast('Toto jedlo už v zozname je'); break; }
+        await setMeta('recipes', recipes().concat([{ name, ingredients: ing }]));
+        Analysis.setRecipes(recipes());
+        openInfo('recipes');
+        toast('Pridané ✓');
+        break;
+      }
+      case 'rc-del': {
+        const i = Number(act.dataset.i), prev = recipes();
+        await setMeta('recipes', prev.filter((_, j) => j !== i));
+        Analysis.setRecipes(recipes());
+        openInfo('recipes');
+        toast((prev[i] || {}).name + ' zmazané', { run: async () => { await setMeta('recipes', prev); Analysis.setRecipes(recipes()); if (openSheets.includes('mini-sheet')) openInfo('recipes'); } });
+        break;
+      }
       case 'scan-test': location.href = 'sken-test.html'; break;
       case 'rem-open': openInfo('rem'); break;
       case 'install': openInfo('install'); break;
+      case 'shortcut': openInfo('shortcut'); break;
+      case 'copy-link': {
+        const link = appLink(act.dataset.ty);
+        try { await navigator.clipboard.writeText(link); toast('Odkaz skopírovaný'); } catch (_) { toast('Odkaz podrž prstom a skopíruj'); }
+        break;
+      }
       case 'ct-add': {
         const label = $('#ct-text').value.trim();
         const words = Analysis.wordsFor(label);
@@ -2356,6 +2747,50 @@
         break;
       }
       case 'test-new': openTestNew(); break;
+      case 'ri-new': openReintroNew(); break;
+      case 'week-hide': await setMeta('weekSeen', act.dataset.end); renderToday(); break;
+      case 'ri-start': {
+        const txt = $('#ri-text').value.trim();
+        const tg = TAGS.find(x => x[0] === riDraft.tag);
+        if (!txt && !tg) { toast('Vyber alebo napíš, čo zavedieš späť'); break; }
+        await setMeta('reintro', { what: txt || tg[2], tag: tg ? tg[0] : null, start: parseDay(todayStr()).getTime(), doses: [{}, {}, {}] });
+        closeSheet('mini-sheet');
+        toast('Zavádzanie sa začalo');
+        render();
+        break;
+      }
+      case 'ri-dose': {
+        // zapíše dávku ako jedlo s porciou podľa dňa; podrobnosti sa dajú doplniť
+        const i = reintroInfo();
+        if (!i || i.todayDose < 0) break;
+        const now = Date.now(), r = JSON.parse(JSON.stringify(i.r));
+        const e = { id: uid(), type: 'food', ts: now, desc: r.what, stress: null, mood: null, note: 'opätovné zavedenie, deň ' + (i.todayDose + 1),
+          created: now, updated: now, portion: RI_DOSES[i.todayDose][0], rushed: false, tags: r.tag ? [r.tag] : [], noTags: [], amount: '', product: null, place: 'doma', enzyme: false };
+        await DB.put('entries', e);
+        entries.push(e);
+        r.doses[i.todayDose] = { ts: now, id: e.id };
+        await setMeta('reintro', r);
+        flashId = e.id;
+        showDone();
+        render();
+        toast('Dávka zapísaná', { label: 'Upraviť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'ri-end': {
+        const i = reintroInfo();
+        if (!i) break;
+        const [v, txt] = reintroVerdict(i);
+        openFinding({ text: i.r.what, status: v, fromReintro: true,
+          note: 'Opätovné zavedenie: ' + i.res.map(x => `deň ${x.i + 1} ${!x.eaten ? 'nezjedené' : x.n ? 'ťažkosti ' + x.max + '/10' : 'bez ťažkostí'}`).join(', ') + '. ' + txt });
+        break;
+      }
+      case 'ri-cancel': {
+        const prevRi = meta.reintro;
+        await setMeta('reintro', null);
+        render();
+        toast('Zavádzanie zrušené', { run: async () => { await setMeta('reintro', prevRi); render(); } });
+        break;
+      }
       case 'test-for': {
         const s = lastSus.get(act.dataset.susId);
         if (!s) break;
@@ -2434,6 +2869,7 @@
       }
     } else if (t.id === 'f-rushed') draft.rushed = t.checked;
     else if (t.id === 'f-enzyme') draft.enzyme = t.checked;
+    else if (t.id === 'f-rec') draft.rec = t.checked;
     else if (t.id === 'o-from' || t.id === 'o-to' || t.id === 'o-min') {
       let from = Number($('#o-from').value), to = Number($('#o-to').value);
       if (to <= from) { to = from + 2; }
@@ -2488,6 +2924,17 @@
   });
 
   // ---------- Štart ----------
+  // Skratka z plochy alebo z aplikácie Skratky: ./?add=food otvorí rovno zápis
+  function openFromLink() {
+    let ty = null;
+    try { ty = new URLSearchParams(location.search).get('add'); } catch (_) { /* nič */ }
+    if (!ty || !TYPES[ty]) return;
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch (_) { /* nič */ }
+    openEntry();
+    if (ty !== 'food') { draft = Object.assign(newDraft(ty), { ts: draft.ts, tsTouched: draft.tsTouched, tsCustom: draft.tsCustom }); renderForm(); }
+  }
+  const appLink = ty => location.origin + location.pathname + '?add=' + ty;
+
   async function start() {
     try {
       await load();
@@ -2498,6 +2945,7 @@
     }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     switchView('today');
+    openFromLink();
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       // keď sa nainštaluje nová verzia, stránku raz obnovíme, aby sedeli všetky súbory
       const hadController = !!navigator.serviceWorker.controller;

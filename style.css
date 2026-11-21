@@ -796,3 +796,44 @@ details.more.pend > summary { padding: 6px 0; font-size: .8824rem; color: var(--
 .cal-legend i.c-ok { box-shadow: none; }
 .ds i { width: 8px; height: 8px; }
 .ds.sel i { box-shadow: 0 0 0 1.5px var(--bg); }
+
+/* ---------- 3.2: rýchly zápis na obrazovke Dnes ---------- */
+.card.quick { padding: 14px 16px; }
+.card.quick h3 { margin: 0 0 10px; font: 700 .9412rem var(--round); color: var(--ink-2); }
+.card.quick .sevrow .chip { border-color: color-mix(in srgb, var(--sc) 55%, var(--line)); color: var(--ink); background: var(--surface); }
+.card.quick .sevrow .chip:active { background: var(--sc); color: #fff; }
+.card.quick .scale-ends { margin-top: 6px; }
+.card.quick.miss { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; background: var(--sun-soft); box-shadow: none; }
+.card.quick.miss > span { font-weight: 700; flex: 1 1 auto; }
+.card.quick.miss .chip { background: var(--surface); border-color: transparent; }
+.chip.rec { display: inline-flex; align-items: center; gap: 6px; }
+.chip.rec .tiny { margin-left: 2px; }
+.again-row { margin-top: 10px; }
+.chip.again { display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; background: var(--accent-soft) !important; border-color: transparent; text-align: left; }
+.chip.again .tiny { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.chip.again.on { background: var(--accent) !important; color: var(--accent-ink); }
+.chip.again.on .tiny { color: inherit; }
+.btn.again-now { margin: 0 0 12px; background: var(--surface); color: var(--accent); }
+.link-txt { word-break: break-all; -webkit-user-select: text; user-select: text; }
+
+/* ---------- 3.2: zavádzanie, týždeň, prehľad pre lekára ---------- */
+.ri-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; border-top: 1px solid var(--line); font-size: .9412rem; font-weight: 600; }
+.ri-row:first-of-type { border-top: 0; }
+.card.week .res-top { margin-bottom: 8px; }
+.card.week h3 { margin: 0; flex: 1; }
+.card.week .x { width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); padding: 0; font-size: .9412rem; }
+.wk { display: grid; grid-template-columns: 1fr 90px auto; align-items: center; gap: 10px; font-size: .8824rem; color: var(--ink-2); min-height: 28px; }
+.wk b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.wk-bar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.wk-bar i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+.rchart { display: block; width: 100%; height: auto; margin: 4px 0 0; overflow: visible; }
+.rchart text { font-size: 7px; fill: var(--ink-3); font-family: inherit; }
+.bristol { display: grid; grid-template-columns: 14px 1fr 22px; gap: 4px 8px; align-items: center; font-size: .7647rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.bristol > span:nth-child(3n) { text-align: right; }
+.bbar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.bbar i { display: block; height: 100%; border-radius: 4px; }
+.bbar i.hard { background: var(--stool); } .bbar i.ok { background: var(--food); } .bbar i.soft { background: var(--sev-mid); }
+@media print {
+  .rchart text { fill: #333; }
+  .bbar { background: #eee; }
+}
