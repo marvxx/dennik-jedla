@@ -117,3 +117,19 @@ test('bez údajov nič nepadne', () => {
   assert.equal(A.evidence([], {}, 'tag:mliecne', NOW).list.length, 0);
   assert.equal(A.evidence([], {}, 'gap:long', NOW), null);
 });
+
+test('málo pitia: aj podľa počtu pohárov vody', () => {
+  const days = {};
+  const entries = [];
+  for (let i = 1; i <= 20; i++) {
+    const d = new Date(2026, 9, i, 12);
+    const ds = A.localDate(d.getTime());
+    const low = i % 2 === 0;
+    days[ds] = low ? { date: ds, glasses: 2 } : { date: ds, glasses: 7, noSymptoms: true };
+    entries.push(food('f' + i, d.getTime(), 'ryža'));
+    if (low) entries.push(sym('s' + i, d.getTime() + 2 * H));
+  }
+  const r = A.analyze(entries, days, { now: NOW });
+  const w = r.days.find(x => x.key === 'water:malo');
+  assert.ok(w && w.level !== 'none', 'málo pitia by malo vyjsť podozrivo');
+});

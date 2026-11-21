@@ -410,7 +410,7 @@
       ['cyc:lut', (v, d) => phase[d] === 'lut'],
       ['cyc:fol', (v, d) => phase[d] === 'fol'],
       ['activity:ziadny', v => v.activity === 'ziadny'],
-      ['water:malo', v => v.water === 'malo'],
+      ['water:malo', v => v.water === 'malo' || (v.water == null && v.glasses != null && v.glasses < 5)],
     ];
     const dTotal = dayList.length;
     const dHit = dayList.filter(([d]) => symDays.has(d)).length;

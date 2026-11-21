@@ -1,8 +1,9 @@
-/* Denník jedla a trávenia – celá aplikácia. Údaje zostávajú len v telefóne (IndexedDB). */
+/* Denník jedla a trávenia – celá aplikácia. Údaje zostávajú len v telefóne (IndexedDB).
+   NEUPRAVOVAŤ PRIAMO: súbor sa skladá zo súborov v src/ príkazom  node tools/build.js */
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.4';
+  const APP_VERSION = '3.5';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -23,6 +24,8 @@
     phone: '<rect x="7" y="3" width="10" height="18" rx="2.500"/><path d="M11 18h2"/>',
     trash: '<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>',
     scan: '<path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3M8 9v6M11 9v6M14 9v6M17 9v6"/>',
+    drop: '<path d="M12 3.500c3 3.700 6 7.200 6 10.500a6 6 0 0 1-12 0c0-3.300 3-6.800 6-10.500z"/>',
+    cup: '<path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5zM16 10.500h1.500a2.500 2.500 0 0 1 0 5H16M8 3.500c-.700 1 .700 2 0 3M12 3.500c-.700 1 .700 2 0 3"/>',
   };
   const ic = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
   const DAY = 864e5;
@@ -744,6 +747,7 @@
         <p><b>${isToday ? 'Dnes zatiaľ nič zapísané' : 'V tento deň nie je nič zapísané'}</b><br>Ťukni dole na ＋ a zapíš jedlo alebo ťažkosti.</p></div>`;
     }
     h += quickToolsHtml(d, list);
+    h += drinkHtml(d, list);
     h += dayCardHtml(d);
     el.innerHTML = h;
     flashId = null;
@@ -881,6 +885,59 @@
     return grp('', `<div class="desc-row"><textarea id="f-desc" class="big" rows="1" placeholder="${esc(placeholder)}" enterkeyhint="done">${esc(draft.desc)}</textarea>${isFood ? `<span class="desc-btns">${star}<button type="button" class="star" data-act="scan" aria-label="Skenovať čiarový kód">${ic('scan')}</button></span>` : ''}</div>${quick}`);
   }
 
+
+  // ---------- Pitie: voda a káva jedným ťuknutím ----------
+  // Voda sa počíta v pohároch za deň (days[d].glasses). Káva sa zapisuje ako jedlo s časom,
+  // aby sa dala vyhodnotiť ako ostatné jedlá (napr. „káva ako prvé v daný deň“).
+  const WATER_GOAL = 6;
+  const isCoffee = e => e.type === 'food' && Analysis.mealTags(e).includes('kava');
+
+  // najčastejšie zapisovaná káva (napr. „káva s mliekom“), inak len „káva“
+  function usualCoffee() {
+    const m = new Map();
+    entries.filter(isCoffee).forEach(e => { const k = e.desc.trim(); m.set(k, (m.get(k) || 0) + 1); });
+    const top = [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+    return top ? top[0] : 'káva';
+  }
+
+  function drinkHtml(d, list) {
+    const g = (days[d] && days[d].glasses) || 0;
+    const cups = list.filter(isCoffee).length;
+    const drops = [...Array(Math.max(WATER_GOAL, g))].map((_, i) => `<i class="${i < g ? 'on' : ''}"></i>`).join('');
+    return `<div class="card quick drink">
+      <div class="dr-row"><span class="dr-ico water">${ic('drop')}</span>
+        <span class="dr-txt"><b>Voda</b><small>${g} ${g === 1 ? 'pohár' : g >= 2 && g <= 4 ? 'poháre' : 'pohárov'}${g < WATER_GOAL ? ' · cieľ ' + WATER_GOAL : ' ✓'}</small><span class="drops">${drops}</span></span>
+        <button type="button" class="dr-btn minus" data-act="water" data-v="-1" data-date="${d}" aria-label="Ubrať pohár"${g ? '' : ' disabled'}>−</button>
+        <button type="button" class="dr-btn" data-act="water" data-v="1" data-date="${d}" aria-label="Pridať pohár">＋</button></div>
+      <div class="dr-row"><span class="dr-ico coffee">${ic('cup')}</span>
+        <span class="dr-txt"><b>Káva</b><small>${cups ? cups + '× · ' : ''}${esc(usualCoffee())}</small></span>
+        <button type="button" class="dr-btn" data-act="coffee" data-date="${d}" aria-label="Zapísať kávu">＋</button></div></div>`;
+  }
+
+  async function addWater(d, step) {
+    const v = days[d] || { date: d };
+    v.glasses = Math.max(0, (v.glasses || 0) + step);
+    if (!v.glasses) delete v.glasses;
+    days[d] = v;
+    await DB.put('days', v);
+    if (!meta.firstUse) await setMeta('firstUse', Date.now());
+    if (step > 0) buzz(8);
+  }
+
+  async function addCoffee(d) {
+    const now = Date.now();
+    const ts = d === todayStr() ? now : atHour(d, 10);
+    const desc = usualCoffee();
+    const src = entries.filter(e => isCoffee(e) && e.desc.trim() === desc).sort((a, b) => b.ts - a.ts)[0];
+    const e = { id: uid(), type: 'food', ts, desc, stress: null, mood: null, note: '', created: now, updated: now,
+      portion: (src && src.portion) || null, rushed: false, tags: (src && src.tags) || [], noTags: (src && src.noTags) || [],
+      amount: '', product: null, place: (src && src.place) || null, enzyme: false };
+    await DB.put('entries', e);
+    entries.push(e);
+    if (!meta.firstUse) await setMeta('firstUse', now);
+    buzz(8);
+    return e;
+  }
   // ---------- Skenovanie balených výrobkov ----------
   const products = () => meta.products || {};
 
@@ -2085,6 +2142,7 @@
     }
 
     if (insTab === 'days') {
+      h += trendHtml();
       if (r.loads && r.loads.length) {
         h += `<div class="card"><h2>Dávka za deň</h2><p class="tiny" style="margin:0 0 6px">Pri intoleranciách rozhoduje množstvo. Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Veľká porcia sa ráta viac, s enzýmom menej.</p>`;
         h += resList(r.loads, 'load');
@@ -2099,6 +2157,108 @@
     el.innerHTML = h + note;
   }
 
+
+  // ---------- Je to lepšie? (dni s ťažkosťami po týždňoch) ----------
+  // Udalosti na grafe: začiatok testu a zavádzania (meta.history) a uložené zistenia.
+  const eventLog = () => meta.history || [];
+  async function addHistory(txt) {
+    await setMeta('history', eventLog().concat([{ ts: Date.now(), txt }]).slice(-50));
+  }
+
+  // pondelok týždňa, do ktorého patrí deň (ako reťazec RRRR-MM-DD)
+  function weekStart(ds) {
+    const d = parseDay(ds);
+    const back = (d.getDay() + 6) % 7;
+    return dateStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() - back, 12).getTime());
+  }
+  const addDays = (ds, n) => { const d = parseDay(ds); return dateStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, 12).getTime()); };
+  const shortDate = ds => { const d = parseDay(ds); return d.getDate() + '. ' + (d.getMonth() + 1) + '.'; };
+
+  function weeklyTrend(maxWeeks) {
+    if (!entries.length) return [];
+    const today = todayStr();
+    const first = entries.reduce((m, e) => Math.min(m, e.ts), Infinity);
+    const ix = dayIndex();
+    const logged = new Set(entries.map(e => dayOf(e.ts)));
+    const sevByDay = ix.sev;
+    let ws = weekStart(today);
+    const firstWs = weekStart(dayOf(first));
+    const weeks = [];
+    while (weeks.length < maxWeeks && ws >= firstWs) {
+      let n = 0, sym = 0, known = 0, sevSum = 0, sevN = 0;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(ws, i);
+        if (d > today) break;
+        n++;
+        const s = sevByDay[d];
+        if (s) { sym++; known++; sevSum += s; sevN++; } else if (days[d] && days[d].noSymptoms) known++;
+      }
+      const lg = [...Array(n)].filter((_, i) => logged.has(addDays(ws, i))).length;
+      weeks.unshift({ ws, n, sym, known, logged: lg, avg: sevN ? sevSum / sevN : null, current: ws === weekStart(today) });
+      ws = addDays(ws, -7);
+    }
+    return weeks;
+  }
+
+  function trendEvents(weeks) {
+    if (!weeks.length) return [];
+    const from = parseDay(weeks[0].ws).getTime();
+    const ev = eventLog().map(h => ({ ts: h.ts, txt: h.txt }))
+      .concat(findings().filter(f => f.ts).map(f => ({ ts: f.ts, txt: 'zistenie: ' + f.text + ' – ' + FND_TXT[f.status] })));
+    return ev.filter(x => x.ts >= from).sort((a, b) => a.ts - b.ts)
+      .map(x => ({ ...x, wi: weeks.findIndex(w => w.ws === weekStart(dayOf(x.ts))) })).filter(x => x.wi >= 0);
+  }
+
+  function trendHtml() {
+    const weeks = weeklyTrend(12);
+    const usable = weeks.filter(w => w.logged >= 3);
+    if (usable.length < 2) return '';
+    const ev = trendEvents(weeks);
+    const W = 300, Hh = 120, top = 10, base = 92, N = weeks.length, bw = W / N;
+    let svg = '';
+    for (let y = 0; y <= 7; y += 7) svg += `<line x1="0" y1="${base - (y / 7) * (base - top)}" x2="${W}" y2="${base - (y / 7) * (base - top)}" stroke="var(--line)" stroke-width="${y ? 0.6 : 1}"${y ? ' stroke-dasharray="2 3"' : ''}/>`;
+    weeks.forEach((w, i) => {
+      const x = i * bw + bw * 0.18, wd = bw * 0.64;
+      const thin = w.logged < 3;
+      if (w.sym) {
+        const h = (w.sym / 7) * (base - top);
+        svg += `<rect x="${x.toFixed(1)}" y="${(base - h).toFixed(1)}" width="${wd.toFixed(1)}" height="${h.toFixed(1)}" rx="2.5" fill="${sevColor(Math.round(w.avg))}"${thin ? ' opacity=".35"' : ''}><title>${shortDate(w.ws)}: ${w.sym} dní s ťažkosťami</title></rect>`;
+        svg += `<text x="${(x + wd / 2).toFixed(1)}" y="${(base - h - 3).toFixed(1)}" text-anchor="middle" class="v">${w.sym}</text>`;
+      } else if (!thin) {
+        svg += `<circle cx="${(x + wd / 2).toFixed(1)}" cy="${base - 4}" r="2.6" fill="var(--food)"><title>${shortDate(w.ws)}: bez ťažkostí</title></circle>`;
+      }
+      if (i === 0 || i === N - 1 || i === Math.floor((N - 1) / 2)) {
+        svg += `<text x="${(x + wd / 2).toFixed(1)}" y="${base + 11}" text-anchor="middle">${w.current ? 'teraz' : shortDate(w.ws)}</text>`;
+      }
+    });
+    // značky udalostí pod osou
+    const marks = [];
+    ev.forEach(x => { if (!marks.includes(x.wi)) marks.push(x.wi); });
+    marks.forEach(wi => {
+      const cx = wi * bw + bw / 2;
+      const num = ev.findIndex(x => x.wi === wi) + 1;
+      svg += `<circle cx="${cx.toFixed(1)}" cy="${base + 21}" r="5.5" fill="var(--accent)"/><text x="${cx.toFixed(1)}" y="${base + 23.6}" text-anchor="middle" class="m">${num}</text>`;
+    });
+
+    // porovnanie: posledné 4 ukončené týždne s predošlými 4 (len týždne s údajmi)
+    const done = weeks.filter(w => !w.current && w.logged >= 3);
+    const rate = list => list.reduce((a, w) => a + w.sym / w.n * 7, 0) / list.length;
+    let verdict = '';
+    if (done.length >= 4) {
+      const recent = done.slice(-4), prev = done.slice(-8, -4);
+      const a = rate(recent);
+      if (prev.length >= 2) {
+        const b = rate(prev), diff = a - b;
+        const word = diff <= -0.5 ? '<b class="good">Lepšie.</b>' : diff >= 0.5 ? '<b class="bad">Horšie.</b>' : 'Zhruba rovnako.';
+        verdict = `Posledné 4 týždne ťažkosti priemerne ${a.toFixed(1).replace('.', ',')} dňa týždenne, predtým ${b.toFixed(1).replace('.', ',')}. ${word}`;
+      } else verdict = `Posledné týždne ťažkosti priemerne ${a.toFixed(1).replace('.', ',')} dňa týždenne.`;
+    }
+    const evList = ev.length ? '<ol class="tr-ev">' + ev.map((x, i) => `<li><b>${i + 1}</b> ${esc(shortDate(dayOf(x.ts)))} ${esc(x.txt)}</li>`).join('') + '</ol>' : '';
+    return `<div class="card trend"><h2>Je to lepšie?</h2>
+      <svg class="rchart tr" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Počet dní s ťažkosťami v jednotlivých týždňoch">${svg}</svg>
+      <p class="tiny" style="margin:2px 0 0">Stĺpec = počet dní s ťažkosťami v týždni (zo 7), farba = priemerná sila. Bledý stĺpec = málo zápisov.</p>
+      ${verdict ? `<p class="small" style="margin:10px 0 0">${verdict}</p>` : ''}${evList}</div>`;
+  }
   // ---------- Prehľad pre lekára ----------
   function buildReport() {
     const all = [...entries].sort((a, b) => a.ts - b.ts);
@@ -2255,7 +2415,7 @@
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
     const settings = {};
-    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
     const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
@@ -2311,7 +2471,7 @@
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
     if (data.settings && typeof data.settings === 'object') {
-      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro']) {
+      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history']) {
         if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
       }
     }
@@ -2479,6 +2639,7 @@
     ['today', 'Máš teraz ťažkosti?', 'Najrýchlejší zápis: ťukni na číslo 1 až 10 a ťažkosti sú zapísané s aktuálnym časom. Druh a miesto môžeš doplniť cez „Doplniť“ v ozname.'],
     ['today', 'Chýba obed? (raňajky, večera)', 'Ak v dni so záznamami chýba bežné jedlo, denník sa spýta. Ťuknutím ho zapíšeš s typickým časom, ktorý môžeš zmeniť. Ak si naozaj nejedla, nič nerob.'],
     ['today', 'Pravidelné', 'Veci, ktoré si nastavila na každý deň (napr. ranná káva, probiotiká). Keď sa blíži ich čas, zapíšeš ich jedným ťuknutím.'],
+    ['today', 'Voda a káva', 'Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
     ['today', 'Aký bol dnešný deň?', 'Spánok, menštruácia, pohyb a pitie raz za deň. Nepovinné, ale pomáha zistiť, či ťažkosti nesúvisia s dňom, nielen s jedlom.'],
     ['today', 'Deň bez ťažkostí', 'Ťukni večer, ak v ten deň nebolo nič. Je to rovnako dôležité ako zapisovať ťažkosti: bez toho denník nevie, či bol deň pokojný, alebo si len nezapisovala.'],
     ['today', 'Tvoj týždeň', 'V nedeľu večer až v utorok zhrnutie týždňa: koľko dní bolo s ťažkosťami v porovnaní s minulým týždňom a jedna rada. Krížikom ho skryješ.'],
@@ -2514,6 +2675,7 @@
     ['insights', 'Hromadenie', 'Vadí, keď sa tá istá skupina za 12 hodín zje viackrát?'],
     ['insights', 'Na druhý deň (12–48 h)', 'Niektoré intolerancie sa prejavia až neskôr. Tu sú jedlá, po ktorých prišli ťažkosti o 12 až 48 hodín.'],
     ['insights', 'Dávka za deň', 'Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Ak vadí až väčšie množstvo, ukáže sa to tu, aj keď jedno jedlo samo nevadí.'],
+    ['insights', 'Je to lepšie?', 'Graf v časti Dni: koľko dní v každom týždni boli ťažkosti (zo 7). Farba stĺpca je priemerná sila. Čísla v krúžkoch pod grafom sú udalosti (začiatok testu, zavádzania, zistenia), aby bolo vidieť, čo sa po nich zmenilo. Pod grafom porovnanie posledných 4 týždňov s predošlými.'],
     ['insights', 'Okolnosti dňa', 'Dni so zlým spánkom, menštruáciou, bez pohybu, s málo pitia, a fázy cyklu: dni pred menštruáciou (luteálna fáza) a po nej (folikulárna).'],
     ['insights', 'Najhoršie a najlepšie dni', 'Čo sa jedlo len v najhorších dňoch a čo len v najlepších. „Bolo v oboch“ zvyčajne nerozhoduje, pokiaľ nevadí až väčšie množstvo.'],
     ['mine', 'Moje zistenia', 'Tvoj vlastný zoznam: čo vadí, čo nevadí a čo je podozrivé. Zapíšeš ho z výsledkov tlačidlom „Zapísať zistenie“ alebo ručne.'],
@@ -2745,6 +2907,18 @@
       case 'go-today': todayExpanded = false; goDay(todayStr()); break;
       case 'cancel-edit': cancelEntry(); break;
       case 'delete': deleteCurrent(); break;
+      case 'water': {
+        await addWater(act.dataset.date, Number(act.dataset.v));
+        renderToday();
+        break;
+      }
+      case 'coffee': {
+        const e = await addCoffee(act.dataset.date);
+        flashId = e.id;
+        renderToday();
+        toast('Zapísané: ' + e.desc, { run: async () => { await DB.del('entries', e.id); entries = entries.filter(x => x.id !== e.id); renderToday(); } });
+        break;
+      }
       case 'quick-sym': {
         // ťažkosti jedným ťuknutím; podrobnosti sa dajú doplniť z oznamu
         const sev = Number(act.dataset.v), now = Date.now();
@@ -2942,6 +3116,7 @@
         const tg = TAGS.find(x => x[0] === riDraft.tag);
         if (!txt && !tg) { toast('Vyber alebo napíš, čo zavedieš späť'); break; }
         await setMeta('reintro', { what: txt || tg[2], tag: tg ? tg[0] : null, start: parseDay(todayStr()).getTime(), doses: [{}, {}, {}] });
+        await addHistory('začalo zavádzanie: ' + (txt || tg[2]));
         closeSheet('mini-sheet');
         toast('Zavádzanie sa začalo');
         render();
@@ -2991,6 +3166,7 @@
         const tg = TAGS.find(x => x[0] === tDraft.tag);
         if (!txt && !tg) { toast('Vyber alebo napíš, čo vynecháš'); break; }
         await setMeta('test', { what: txt || tg[2], tag: txt ? null : tg[0], start: parseDay(todayStr()).getTime(), days: tDraft.days });
+        await addHistory('začal test bez: ' + (txt || tg[2]));
         closeSheet('mini-sheet');
         toast('Test sa začal ');
         render();
