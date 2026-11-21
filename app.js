@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.2';
+  const APP_VERSION = '3.3';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -48,7 +48,8 @@
     ['sladidla', '', 'sladidlá / light'], ['pikantne', '', 'pikantné'], ['mastne', '', 'mastné / vyprážané'],
     ['surova', '', 'surová zelenina'],
   ];
-  const PLACES = [['doma', 'doma'], ['restauracia', 'reštaurácia / jedáleň'], ['niekto', 'u niekoho'], ['kupovane', 'kupované hotové']];
+  // odkiaľ je jedlo (kto ho pripravil), nie kde sa jedlo
+  const PLACES = [['doma', 'uvarené doma'], ['restauracia', 'reštaurácia, jedáleň'], ['niekto', 'u niekoho na návšteve'], ['kupovane', 'kúpené hotové (obchod, bufet)']];
   const KINDS = ['kŕč', 'nadúvanie', 'plynatosť', 'nevoľnosť', 'pálenie záhy', 'nutkanie na stolicu'];
   const LOCATION = [['horna', 'hore'], ['pupok', 'okolo pupka'], ['dolna', 'dole'], ['lava', 'ľavá strana'], ['prava', 'pravá strana'], ['cele', 'celé brucho']];
   const DURATIONS = ['5 min', '15 min', '30 min', '1 h', '2 h', 'viac hodín'];
@@ -70,12 +71,12 @@
     'cyc:lut': 'dni pred menštruáciou (luteálna fáza)', 'cyc:fol': 'dni po menštruácii (folikulárna fáza)',
     'activity:ziadny': 'deň bez pohybu', 'water:malo': 'málo pitia',
     'risk': 'obsahuje moje rizikové suroviny',
-    'risk&enzyme': 's enzýmom (laktáza…)', 'risk&away': 'mimo domu', 'risk&stress': 'pri strese 4–5',
+    'risk&enzyme': 's enzýmom (laktáza…)', 'risk&away': 'jedlo nie z domu', 'risk&stress': 'pri strese 4–5',
     'risk&period': 'počas menštruácie', 'risk&sleep': 'po zlom spánku', 'risk&rushed': 'v zhone',
   };
   TAGS.forEach(([v, e, t]) => { CTX_LABELS['tag:' + v] = t; CTX_LABELS['stack:' + v] = t; CTX_LABELS['load:' + v] = t + ' – 2 a viac porcií za deň'; });
   Object.assign(CTX_LABELS, { 'late': 'jedlo po 20:00', 'gap:long': 'jedlo po dlhej pauze (5 h a viac)', 'first:kava': 'káva ako prvé v daný deň' });
-  PLACES.forEach(([v, l]) => { CTX_LABELS['place:' + v] = l; });
+  PLACES.forEach(([v, l]) => { CTX_LABELS['place:' + v] = 'jedlo: ' + l; });
   const tagLabel = t => { const x = TAGS.find(y => y[0] === t); return x ? x[2] : t; };
 
   // ---------- Pomocné ----------
@@ -1118,7 +1119,8 @@
       h += grp('Obsahovalo', tagChips() + `<p class="tiny" id="rc-hint" style="margin:8px 0 0">${recipeHint()}</p>` +
         '<p class="tiny" style="margin:8px 0 0">✦ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>');
       h += grp('', sw('f-enzyme', 'Užila som laktázu / enzým', draft.enzyme) + sw('f-rushed', 'Jedla som v zhone', draft.rushed));
-      h += grp('Kde?', chipGroup('place', PLACES, {}));
+      h += grp('Odkiaľ je jedlo?', chipGroup('place', PLACES, { cls: 'col' }) +
+        '<p class="tiny" style="margin:8px 0 0">Kto jedlo pripravil. Ukáže, či vadí skôr jedlo, ktoré nie je z domu.</p>');
     } else if (t === 'symptom') {
       h += grp('Aké ťažkosti?', chipGroup('kinds', KINDS, { multi: true }));
       h += grp('Aké silné?', chipGroup('severity', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]),
@@ -1406,7 +1408,7 @@
     if (sumTags.length) {
       h += `<div class="trace-sum"><b>Za posledných 48 h:</b><div class="pending" style="margin-top:6px">` +
         sumTags.map(([t, n]) => `<span class="${risk.includes(t) ? 'risk' : ''}">${esc(tagLabel(t))} ${n}×</span>`).join('') +
-        (away ? `<span>mimo domu ${away}×</span>` : '') + '</div></div>';
+        (away ? `<span>jedlo nie z domu ${away}×</span>` : '') + '</div></div>';
     }
     const dset = [...new Set([dayOf(s.ts), dayOf(s.ts - 864e5), dayOf(from)])];
     const dinfo = dset.map(d => days[d] && dayText(days[d]) ? `<div class="tiny">${fmtDayHead(d)}: ${esc(dayText(days[d]))}</div>` : '').join('');
@@ -2006,7 +2008,7 @@
       h += `<div class="card"><h2>Rizikové jedlo – kedy vadí viac</h2>`;
       if (!riskTags().length) {
         h += `<p class="small muted" style="margin:0">Nastav si svoje intolerancie v <b>Nastaveniach</b>. Potom tu uvidíš, či rizikové jedlo vadí viac
-          mimo domu, pri strese, počas menštruácie a či pomáha enzým.</p>`;
+          keď nie je z domu, pri strese, počas menštruácie a či pomáha enzým.</p>`;
       } else if (!r.riskCtx.length) {
         h += `<p class="small muted" style="margin:0">Zatiaľ málo rizikových jedál na porovnanie (treba aspoň 3 v každej skupine).</p>`;
       } else {
@@ -2231,7 +2233,7 @@
   function buildCsv() {
     const head = ['Dátum', 'Čas', 'Typ', 'Popis', 'Sila', 'Trvanie', 'Stolica', 'Stres', 'Poznámka',
       'Nálada', 'Porcia', 'V zhone', 'Obsahovalo', 'Druh ťažkostí', 'Miesto', 'Spánok', 'Menštruácia', 'Pohyb', 'Pitie',
-      'Kde jedla', 'Enzým', 'Deň bez ťažkostí', 'Množstvo', 'Čiarový kód'];
+      'Odkiaľ jedlo', 'Enzým', 'Deň bez ťažkostí', 'Množstvo', 'Čiarový kód'];
     const rows = [head];
     [...entries].sort((a, b) => a.ts - b.ts).forEach(e => {
       const d = new Date(e.ts);

@@ -14,6 +14,10 @@
     'porcia', 'porciu', 'cely', 'cela', 'cele', 'celu', 'male', 'maly', 'mala', 'velky', 'velka',
     'velke', 'domace', 'domaci', 'domaca', 'nejaky', 'nejaka', 'nejake', 'mojej', 'moje', 'potom',
     'rano', 'obed', 'vecera', 'desiata', 'olovrant', 'snack', 'jedlo', 'jedla', 'pitie',
+    'podobe', 'spolu', 'obsahoval', 'obsahovala', 'obsahovalo', 'obsahovali', 'obsahuje', 'trocha', 'zvysok', 'zvysky',
+    'nejakou', 'nejakym', 'takmer', 'skoro', 'dost', 'viac', 'menej', 'kusy', 'kusom', 'cast', 'kusmi', 'zbytok',
+    'mozno', 'teda', 'tiez', 'potom', 'este', 'uz', 'mam', 'som', 'bolo', 'bola', 'bol', 'boli', 'zjedla', 'zjedol',
+    'vypila', 'vypil', 'dala', 'dal', 'jedla', 'pila', 'kupene', 'kupena', 'kupeny', 'hotove', 'hotova', 'hotovy',
   ]);
 
   const ENDINGS = ['iach', 'ami', 'ach', 'ych', 'ymi', 'om', 'ou', 'ov', 'ej', 'ym', 'mi', 'ia', 'ie', 'iu',
@@ -55,7 +59,13 @@
     'hrach|hrachom cícer|cícerom ovocie|ovocím jablko|jablká|jablkom banán|banánom hruška|hruškou pomaranč jahody|jahodami ' +
     'hrozno|hrozienka med|medom cukor|cukrom čokoláda|čokoládou koláč|koláče|koláčom keksy|keks sušienky orechy|oriešky|orieškami ' +
     'káva|kávou čaj|čajom voda|vodou džús|džúsom pivo víno|vínom polievka|polievkou omáčka|omáčkou pizza avokádo ' +
-    'kakao|kakaom tofu hummus palacinky|palacinka toast|toastom sendvič|sendviču burger')
+    'kakao|kakaom tofu hummus|humus|humusom|hummusom palacinky|palacinka toast|toastom sendvič|sendviču burger ' +
+    'chipsy|čipsy|čipsami|chipsami chlebík|chlebíky|chlebíkom rožky lievance|lievancami omeleta|omeletou ' +
+    'kuracie|kuracím|kuracieho|kuracia|kuracou|kuracích bravčové|bravčovým|bravčového hovädzie|hovädzím|hovädzieho ' +
+    'morka|morčacím|morčacieho fazírky|fašírky|fasirky|fašírka|fazirky mleté|mletým|mletého ' +
+    'korenie|korením kari|curry dresing|dressing|dresingom|dressingom majonéza|majonézou kečup|kečupom horčica|horčicou ' +
+    'olej|olejom maslo|maslom kokos|kokosový|kokosovým|kokosové|kokosovom višne|višňový|višňovým|višňové ' +
+    'kuracina|kuracine|kuracinou|kuracinu tortilla|tortillou|tortillu vločky|vločkami granola|granolou ovsená|ovsené|ovsenou|ovsených')
     .split(' ').forEach(grp => {
       const forms = grp.split('|');
       forms.forEach(f => { const k = stem(norm(f)); if (!BASE[k]) BASE[k] = forms[0]; });
@@ -74,13 +84,23 @@
     }
     return out;
   }
-  // Názov pre jedno slovo: základný tvar, inak tvar bez predložky, inak s predložkou („s maslom“)
-  function pickLabel(k, labels) {
+  // Prídavné meno (napr. „pečenej“, „volské“) samo nič nepovie, ukáže sa so slovom za ním
+  const ADJ = /(ý|á|é|ej|ým|ím|ého|ých|ými|ími|ou|ske|ska|sky|ene|ena|eny)$/;
+  // Názov pre jedno slovo: základný tvar, inak dvojica z vlastného textu („volské oko“),
+  // inak tvar bez predložky, inak s predložkou („s maslom“)
+  function pickLabel(k, labels, pairs) {
     if (BASE[k]) return BASE[k];
+    if (pairs && pairs.size) {
+      // dvojice sa porovnávajú podľa slova za prídavným menom („pečenej zeleniny“ aj „pečenej zelenine“)
+      const top = [...pairs.values()].sort((a, b) => b.n - a.n)[0];
+      if (top.n >= 2 || pairs.size === 1) return [...top.lab.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    }
     const arr = [...labels.entries()].sort((a, b) => b[1] - a[1]);
     const free = arr.find(([l]) => !l.includes(' '));
     return (free || arr[0])[0];
   }
+  // dlhý popis skráti na prvé slová
+  const shorten = (t, n) => { const w = String(t).split(/\s+/); return w.length > n ? w.slice(0, n).join(' ') + '…' : t; };
   // Slová, ktoré idú vždy spolu, ukáže ako súvislú frázu z popisu („ovsená kaša“, „káva s mliekom“)
   function phraseFor(desc, keys) {
     const ws = words(desc), idx = [];
@@ -263,11 +283,22 @@
       totalN++;
       if (hit) totalHit++;
       const seenK = new Set();
-      for (const x of words(expand(m.desc))) {
-        if (!x.k || seenK.has(x.k)) continue;
+      const ws = words(expand(m.desc));
+      ws.forEach((x, i) => {
+        if (!x.k || seenK.has(x.k)) return;
         seenK.add(x.k);
         bump(foodStats, x.k, x.prep ? x.prep + ' ' + x.w : x.w, hit);
-      }
+        const nx = ws[i + 1];
+        if (!BASE[x.k] && ADJ.test(x.w) && nx && nx.k) {
+          const st = foodStats.get(x.k);
+          st.pairs = st.pairs || new Map();
+          const pr = st.pairs.get(nx.k) || { n: 0, lab: new Map() };
+          const ph = x.w + ' ' + nx.w;
+          pr.n++;
+          pr.lab.set(ph, (pr.lab.get(ph) || 0) + 1);
+          st.pairs.set(nx.k, pr);
+        }
+      });
       for (const t of tags) bump(ctxStats, 'tag:' + t, t, hit);
       if (risk) bump(ctxStats, 'risk', 'risk', hit);
       if (m.place && m.place !== 'doma') bump(ctxStats, 'place:' + m.place, m.place, hit);
@@ -287,7 +318,7 @@
 
     const topOf = m => [...m.entries()].sort((a, b) => b[1] - a[1])[0];
     function finish(map, group, dropSigs) {
-      let items = [...map].map(([k, st]) => ({ k, st, sig: st.idx.join(','), label: group === 'food' ? pickLabel(k, st.labels) : topOf(st.labels)[0] }));
+      let items = [...map].map(([k, st]) => ({ k, st, sig: st.idx.join(','), label: group === 'food' ? pickLabel(k, st.labels, st.pairs) : topOf(st.labels)[0] }));
       if (group === 'food') {
         // Slová, ktoré sa vyskytli presne v tých istých jedlách, sú jeden výsledok (napr. „káva s mliekom“)
         const bySig = new Map();
@@ -299,7 +330,10 @@
           const [d0, n0] = topOf(dm);
           const whole = n0 / st.idx.length >= 0.6 && d0.split(/\s+/).length <= 5 && tokenize(d0).length === g.length;
           const phrase = !whole && g.length > 1 ? phraseFor(d0, new Set(g.map(it => it.k))) : null;
-          return { k: g.map(it => it.k).join('+'), st, sig: g[0].sig, label: whole ? d0 : phrase || g.map(it => it.label).join(' + ') };
+          // jedno známe slovo vždy v základnom tvare („mrkvy“ → „mrkva“)
+          let label = g.length === 1 && BASE[g[0].k] ? BASE[g[0].k] : whole ? d0 : phrase;
+          if (!label) label = g.length > 2 ? shorten(d0, 5) : g.map(it => it.label).join(' + ');
+          return { k: g.map(it => it.k).join('+'), st, sig: g[0].sig, label };
         });
       } else if (dropSigs) {
         // skupina, ktorá je to isté ako jedno jedlo, sa neukazuje druhýkrát
