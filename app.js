@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.9.1';
+  const APP_VERSION = '4.0.1';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -817,7 +817,7 @@
     }));
   }
   function nudgeHtml(d, list) {
-    let h = '';
+    let h = durAskHtml();
     // dnes: chýba jedlo, ktorého čas už prešiel (len ak sa dnes už niečo zapisovalo alebo je po 10:00)
     const nowH = (Date.now() - parseDay(d).getTime()) / 3600e3;
     // nový používateľ bez záznamov za posledné dni sa nemá cítiť napomínaný
@@ -848,7 +848,8 @@
     if (isToday) {
       h += `<div class="qz-part"><h3>Máš teraz ťažkosti?</h3><div class="chips sevrow">` +
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button type="button" class="chip sev-${n}" data-act="quick-sym" data-v="${n}" style="--sc:${sevColor(n)}">${n}</button>`).join('') +
-        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div></div>';
+        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div>' + quickKindHtml() + '</div>';
+      h += quickStoolHtml();
       // pravidelné záznamy, ktoré dnes ešte nie sú zapísané a ich čas sa blíži alebo prešiel
       const todayKeys = new Set(list.map(e => recKey(e.type, e.desc)));
       const due = recurring().filter(r => !todayKeys.has(recKey(r.type, r.desc)) && now >= atHour(d, r.h + r.m / 60) - 30 * 60e3);
@@ -1039,6 +1040,116 @@
       picks.map(m => `<button type="button" class="chip" data-act="eat-idea" data-idea="${esc(m.desc)}">${esc(m.desc)} <span class="tiny">${m.ok}×</span></button>`).join('') +
       '</div><p class="tiny" style="margin:8px 0 0">Jedlá, po ktorých si nemala ťažkosti. Ťuknutím zapíšeš.</p></div>';
   }
+
+  // ---------- Rýchle doplnenia na obrazovke Dnes ----------
+
+  // 1) Po ťuknutí na číslo ťažkostí: druh jedným ťuknutím (bez neho ich nevidí vyhodnotenie podľa druhu)
+  let quickSymId = null;
+  function quickKindHtml() {
+    const e = quickSymId && entries.find(x => x.id === quickSymId);
+    if (!e || Date.now() - e.created > 15 * 60e3) { quickSymId = null; return ''; }
+    const on = e.kinds || [];
+    return `<div class="qk"><span class="qk-h">Aké? <span class="tiny">môžeš viac</span></span><div class="chips">` +
+      KINDS.map(k => `<button type="button" class="chip${on.includes(k) ? ' on' : ''}" data-act="qs-kind" data-v="${esc(k)}">${esc(k)}</button>`).join('') +
+      `<button type="button" class="chip qk-done" data-act="qs-done">Hotovo</button></div></div>`;
+  }
+  async function toggleQuickKind(k) {
+    const e = entries.find(x => x.id === quickSymId);
+    if (!e) return;
+    const s = new Set(e.kinds || []);
+    if (s.has(k)) s.delete(k); else s.add(k);
+    e.kinds = KINDS.filter(x => s.has(x));
+    e.desc = e.kinds.length ? e.kinds.join(', ') : 'ťažkosti';
+    e.updated = Date.now();
+    await DB.put('entries', e);
+  }
+
+  // 2) „Ako je teraz?“ – ako dlho ťažkosti trvali, jedným ťuknutím
+  const DUR_MIN = { '5 min': 5, '15 min': 15, '30 min': 30, '1 h': 60, '2 h': 120, 'viac hodín': 240 };
+  function durAskEntry() {
+    const now = Date.now();
+    const sym = entries.filter(e => e.type === 'symptom' && !e.duration && !e.durSkip && dayOf(e.ts) === todayStr()
+      && now - e.ts >= 90 * 60e3 && now - e.ts <= 12 * 3600e3 && (!e.durAsk || now - e.durAsk >= 2 * 3600e3))
+      .sort((a, b) => b.ts - a.ts);
+    const e = sym[0];
+    // ak po nich prišli ďalšie ťažkosti, otázka už nedáva zmysel
+    if (!e || entries.some(x => x.type === 'symptom' && x.ts > e.ts)) return null;
+    return e;
+  }
+  function durAskHtml() {
+    const e = durAskEntry();
+    if (!e) return '';
+    const mins = (Date.now() - e.ts) / 60000;
+    const opts = Object.keys(DUR_MIN).filter(k => DUR_MIN[k] <= mins && k !== 'viac hodín');
+    return `<div class="banner nudge dur"><div><b>Ako je teraz?</b>Ťažkosti o ${fmtTime(e.ts)}${e.severity ? ' (' + e.severity + '/10)' : ''}. Ak prešli, ťukni, ako dlho trvali.</div>
+      <div class="nudge-btns">${opts.map(k => `<button type="button" class="btn small" data-act="dur-set" data-id="${e.id}" data-v="${k}">${k}</button>`).join('')}
+        <button type="button" class="btn small primary" data-act="dur-set" data-id="${e.id}" data-v="">Ešte trvá</button>
+        <button type="button" class="btn small ghost" data-act="dur-skip" data-id="${e.id}" aria-label="Nepýtať sa">✕</button></div></div>`;
+  }
+  async function setDuration(id, v) {
+    const e = entries.find(x => x.id === id);
+    if (!e) return;
+    if (v) e.duration = v;
+    else if (Date.now() - e.ts >= 6 * 3600e3) e.duration = 'viac hodín';   // trvá dlho, ďalej sa nepýtať
+    else e.durAsk = Date.now();   // opýta sa znova o 2 hodiny
+    e.updated = Date.now();
+    await DB.put('entries', e);
+  }
+
+  // 6) Stolica jedným ťuknutím; popis typov je vo formulári (odkaz pod číslami)
+  function quickStoolHtml() {
+    return `<div class="qz-part"><h3>Stolica</h3><div class="chips stoolrow">` +
+      BRISTOL.map(([v], i) => `<button type="button" class="chip st-${i < 2 ? 'hard' : i < 4 ? 'ok' : 'loose'}" data-act="quick-stool" data-v="${v}" aria-label="${esc(lab(BRISTOL, v))}">${i + 1}</button>`).join('') +
+      `</div><p class="st-legend">1–2 zápcha · 3–4 v poriadku · 5–7 riedka</p>
+      <button type="button" class="linkbtn" data-act="stool-form">Čo znamenajú čísla? Otvoriť popis typov ›</button></div>`;
+  }
+
+  // 4) Jedlo zapísané len názvom (napr. „segedín“) sa oplatí rozpísať na suroviny
+  function recipeAsk(e) {
+    if (e.type !== 'food' || isCoffee(e)) return null;
+    const desc = e.desc.trim(), k = desc.toLowerCase();
+    if (/[,+]|\s(s|so|a|aj|na|z|zo|v|vo)\s/i.test(' ' + desc + ' ')) return null;   // už je rozpísané
+    if (Analysis.recipeOf(desc).length || (meta.rcAsked || []).includes(k)) return null;
+    const n = entries.filter(x => x.type === 'food' && (x.desc || '').trim().toLowerCase() === k).length;
+    if (n < 3) return null;
+    if (Analysis.detectTags(Analysis.expand(desc)).length && desc.split(/\s+/).length < 2) return null;   // napr. „banán“
+    return desc;
+  }
+  async function offerRecipe(e) {
+    const desc = recipeAsk(e);
+    if (!desc) return;
+    await setMeta('rcAsked', (meta.rcAsked || []).concat([desc.toLowerCase()]).slice(-200));
+    toast(`„${desc}“ si zapísala už ${entries.filter(x => x.type === 'food' && x.desc.trim().toLowerCase() === desc.toLowerCase()).length}×. Rozpísať na suroviny?`, {
+      label: 'Rozpísať', run: () => {
+        openInfo('recipes');
+        const n = $('#rc-name'), i = $('#rc-ing');
+        if (n) n.value = desc;
+        if (i) i.focus();
+      },
+    });
+  }
+
+  // 3) Posun medzi dňami potiahnutím prstom doľava a doprava
+  let daySwipe = null;
+  document.addEventListener('touchstart', ev => {
+    daySwipe = null;
+    if (currentView !== 'today' || openSheets.length || ev.touches.length !== 1) return;
+    const t = ev.target;
+    if (!t.closest || !t.closest('#view-today') || t.closest('.strip, .chips, input, textarea, .ribbon')) return;
+    daySwipe = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+  document.addEventListener('touchend', ev => {
+    const s = daySwipe;
+    daySwipe = null;
+    if (!s || !ev.changedTouches.length) return;
+    const dx = ev.changedTouches[0].clientX - s.x, dy = ev.changedTouches[0].clientY - s.y;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - s.t > 700) return;
+    const p = parseDay(selDay);
+    const next = dateStr(new Date(p.getFullYear(), p.getMonth(), p.getDate() + (dx < 0 ? 1 : -1), 12).getTime());
+    if (next > todayStr()) return;
+    todayExpanded = false;
+    goDay(next);
+  }, { passive: true });
   // ---------- Skenovanie balených výrobkov ----------
   const products = () => meta.products || {};
 
@@ -1444,6 +1555,7 @@
     render();
     const fresh = $('.entry.flash');
     if (fresh) fresh.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (!wasEditing) offerRecipe(e);
   }
 
   function openEntry() {
@@ -2990,6 +3102,10 @@
     ['today', 'Stuha dňa', 'Celý deň na jednej čiare. Zelené čiarky hore sú jedlá, farebné krúžky dole ťažkosti (väčší = silnejšie). Prerušovaná čiara je teraz. Deň trvá od 4:00 do 4:00, takže neskorá večera patrí k správnemu dňu.'],
     ['today', 'Rizikové suroviny v tento deň', 'Koľkokrát si v ten deň zjedla niečo z tvojich intolerancií (nastavuješ ich v Nastaveniach).'],
     ['today', 'Máš teraz ťažkosti?', 'Najrýchlejší zápis: ťukni na číslo 1 až 10 a ťažkosti sú zapísané s aktuálnym časom. Druh a miesto môžeš doplniť cez „Doplniť“ v ozname.'],
+    ['today', 'Aké? (druh ťažkostí)', 'Po ťuknutí na číslo ťažkostí sa ukážu druhy: kŕč, nadúvanie, plynatosť… Ťukni na jeden alebo viac. Vďaka tomu vyhodnotenie vie, po čom prichádza ktorý druh ťažkostí. Ak nechceš, ťukni Hotovo.'],
+    ['today', 'Ako je teraz?', 'Asi hodinu a pol po zápise ťažkostí sa denník spýta, či už prešli. Ťuknutím na čas zapíšeš, ako dlho trvali. „Ešte trvá“ = opýta sa znova o 2 hodiny. Krížik = už sa nepýtať.'],
+    ['today', 'Stolica jedným ťuknutím', 'Čísla 1 až 7 sú Bristolská škála: 1–2 zápcha, 3–4 v poriadku, 5–7 riedka. Ťuknutím zapíšeš s aktuálnym časom. Presný popis každého typu otvoríš pod číslami.'],
+    ['today', 'Posun medzi dňami prstom', 'Na obrazovke Dnes potiahni prstom doľava (ďalší deň) alebo doprava (predošlý deň).'],
     ['today', 'Chýba obed? (raňajky, večera)', 'Ak v dni so záznamami chýba bežné jedlo, denník sa spýta. Ťuknutím ho zapíšeš s typickým časom, ktorý môžeš zmeniť. Ak si naozaj nejedla, nič nerob.'],
     ['today', 'Pravidelné', 'Veci, ktoré si nastavila na každý deň (napr. ranná káva, probiotiká). Keď sa blíži ich čas, zapíšeš ich jedným ťuknutím.'],
     ['today', 'Voda a káva', 'Jeden dielik vody je pohár, asi 0,25 l. Cieľ je 6 dielikov, teda 1,5 l. Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov (1,25 l) za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
@@ -3041,7 +3157,7 @@
     ['mine', 'Prehľad pre lekára', 'Zhrnutie posledných 30 dní na jednu stranu: graf ťažkostí, stolica, podozrenia, zistenia a lieky. Dá sa vytlačiť, uložiť ako PDF alebo poslať ako text.'],
     ['mine', 'Nastavenie výpočtu', 'Za koľko hodín po jedle sa ťažkosti priradia k jedlu (štandardne 0–6 h) a koľkokrát treba jedlo zjesť, kým sa vyhodnotí (štandardne 5×).'],
     ['settings', 'Moje intolerancie', 'Suroviny, o ktorých vieš, že ti vadia. Denník na ne upozorní pri zápise a vo výsledkoch ich sleduje podrobnejšie.'],
-    ['settings', 'Moje jedlá', 'Jedlo, ktoré často varíš, rozpíšeš na suroviny (napr. mamine halušky = halušky, bryndza, slanina). Keď ho potom zapíšeš len názvom, suroviny sa zarátajú.'],
+    ['settings', 'Moje jedlá', 'Jedlo, ktoré často varíš, rozpíšeš na suroviny (napr. mamine halušky = halušky, bryndza, slanina). Keď ho potom zapíšeš len názvom, suroviny sa zarátajú. Keď jedlo zapíšeš len názvom po tretí raz, denník sám ponúkne, či ho chceš rozpísať.'],
     ['settings', 'Pravidelné záznamy', 'Zoznam vecí, ktoré sa opakujú každý deň. Tu ich môžeš zrušiť.'],
     ['settings', 'Záloha', 'Údaje sú len v tomto telefóne. Raz týždenne ulož zálohu (napr. do Súborov alebo na iCloud). Ak telefón stratíš alebo vymažeš údaje Safari, bez zálohy sú preč.'],
     ['settings', 'Všetky záznamy do tabuľky', 'Súbor CSV pre Excel alebo Numbers, napríklad pre lekára alebo výživového poradcu.'],
@@ -3067,6 +3183,10 @@
     'Prehľad pre lekára': 'lekár doktor vizita pdf tlač',
     'Lieky a doplnky': 'tabletky probiotiká vitamíny',
     'Stolica: Bristolská škála': 'hnačka zápcha riedka tvrdá',
+    'Stolica jedným ťuknutím': 'hnačka zápcha riedka tvrdá bristol čísla',
+    'Ako je teraz?': 'trvanie ako dlho prešlo trvá',
+    'Posun medzi dňami prstom': 'potiahnuť gesto swipe deň',
+    'Aké? (druh ťažkostí)': 'kŕč nadúvanie plynatosť nevoľnosť pálenie druh',
     'Skenovanie čiarového kódu': 'čiarový kód obal výrobok skener',
   };
   // zhoda aj v inom tvare: „voda“ nájde „vody“, „pitie“ nájde „pitia“
@@ -3336,8 +3456,36 @@
         if (!meta.firstUse) await setMeta('firstUse', now);
         buzz(sev >= 7 ? 15 : 10);
         flashId = e.id;
+        quickSymId = e.id;
         render();
         toast(`Zapísané: ťažkosti ${sev}/10`, { label: 'Doplniť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'qs-kind': await toggleQuickKind(act.dataset.v); renderToday(); break;
+      case 'qs-done': quickSymId = null; renderToday(); break;
+      case 'dur-set': await setDuration(act.dataset.id, act.dataset.v); renderToday(); toast(act.dataset.v ? 'Zapísané: trvalo ' + act.dataset.v : 'Dobre, opýtam sa neskôr'); break;
+      case 'dur-skip': {
+        const e = entries.find(x => x.id === act.dataset.id);
+        if (e) { e.durSkip = true; await DB.put('entries', e); }
+        renderToday();
+        break;
+      }
+      case 'quick-stool': {
+        const v = act.dataset.v, now = Date.now();
+        const e = { id: uid(), type: 'stool', ts: now, desc: lab(STOOL, v), stool: v, stress: null, mood: null, note: '', created: now, updated: now };
+        await DB.put('entries', e);
+        entries.push(e);
+        if (!meta.firstUse) await setMeta('firstUse', now);
+        buzz(10);
+        flashId = e.id;
+        render();
+        toast('Zapísané: stolica ' + lab(STOOL, v), { label: 'Upraviť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'stool-form': {
+        openEntry();
+        draft = newDraft('stool');
+        renderForm();
         break;
       }
       case 'sym-at': {

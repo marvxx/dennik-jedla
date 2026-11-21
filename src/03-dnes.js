@@ -212,7 +212,7 @@
     }));
   }
   function nudgeHtml(d, list) {
-    let h = '';
+    let h = durAskHtml();
     // dnes: chýba jedlo, ktorého čas už prešiel (len ak sa dnes už niečo zapisovalo alebo je po 10:00)
     const nowH = (Date.now() - parseDay(d).getTime()) / 3600e3;
     // nový používateľ bez záznamov za posledné dni sa nemá cítiť napomínaný
@@ -243,7 +243,8 @@
     if (isToday) {
       h += `<div class="qz-part"><h3>Máš teraz ťažkosti?</h3><div class="chips sevrow">` +
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button type="button" class="chip sev-${n}" data-act="quick-sym" data-v="${n}" style="--sc:${sevColor(n)}">${n}</button>`).join('') +
-        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div></div>';
+        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div>' + quickKindHtml() + '</div>';
+      h += quickStoolHtml();
       // pravidelné záznamy, ktoré dnes ešte nie sú zapísané a ich čas sa blíži alebo prešiel
       const todayKeys = new Set(list.map(e => recKey(e.type, e.desc)));
       const due = recurring().filter(r => !todayKeys.has(recKey(r.type, r.desc)) && now >= atHour(d, r.h + r.m / 60) - 30 * 60e3);

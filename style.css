@@ -974,3 +974,22 @@ details.more.pend > summary { padding: 6px 0; font-size: .8824rem; color: var(--
 .card.ideas { background: var(--food-soft, var(--surface)); }
 .card.ideas .chip { background: var(--surface); border-color: transparent; font-weight: 600; }
 .card.ideas .chip .tiny { color: var(--ink-3); }
+
+/* 4.0: druh ťažkostí, stolica jedným ťuknutím, ako je teraz */
+.qk { margin-top: 12px; padding: 10px 12px; border-radius: 14px; background: var(--sym-soft); }
+.qk-h { display: block; font-weight: 700; font-size: .8824rem; margin-bottom: 8px; }
+.qk-h .tiny { font-weight: 500; color: var(--ink-3); margin-left: 4px; }
+.qk .chip { background: var(--surface); border-color: transparent; min-height: 40px; }
+.qk .chip.on { background: var(--sym); color: #fff; }
+.qk .chip.qk-done { background: transparent; color: var(--accent); font-weight: 700; }
+/* rovnaká veľkosť krúžkov ako pri ťažkostiach: 7 z 10 stĺpcov */
+.chips.stoolrow { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+.chips.stoolrow .chip { min-height: 0; aspect-ratio: 1; padding: 0; border-radius: 50%; justify-content: center; text-align: center; font: 700 0.8824rem var(--round); background: var(--surface); }
+.st-legend { margin: 6px 0 0; font-size: 0.7647rem; color: var(--ink-3); }
+.chips.stoolrow .chip.st-hard { border-color: color-mix(in srgb, var(--sun) 55%, var(--line)); }
+.chips.stoolrow .chip.st-ok { border-color: color-mix(in srgb, var(--food) 55%, var(--line)); }
+.chips.stoolrow .chip.st-loose { border-color: color-mix(in srgb, var(--sym) 55%, var(--line)); }
+.chips.stoolrow .chip:active { background: var(--stool-soft); }
+.scale-ends.three span:nth-child(2) { text-align: center; }
+.linkbtn { display: block; margin: 8px 0 2px; padding: 6px 0; min-height: 36px; border: 0; background: none; color: var(--accent); font: inherit; font-size: .8235rem; font-weight: 600; text-align: left; cursor: pointer; }
+.banner.dur .nudge-btns .btn.ghost { min-width: 36px; }

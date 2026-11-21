@@ -220,8 +220,36 @@
         if (!meta.firstUse) await setMeta('firstUse', now);
         buzz(sev >= 7 ? 15 : 10);
         flashId = e.id;
+        quickSymId = e.id;
         render();
         toast(`Zapísané: ťažkosti ${sev}/10`, { label: 'Doplniť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'qs-kind': await toggleQuickKind(act.dataset.v); renderToday(); break;
+      case 'qs-done': quickSymId = null; renderToday(); break;
+      case 'dur-set': await setDuration(act.dataset.id, act.dataset.v); renderToday(); toast(act.dataset.v ? 'Zapísané: trvalo ' + act.dataset.v : 'Dobre, opýtam sa neskôr'); break;
+      case 'dur-skip': {
+        const e = entries.find(x => x.id === act.dataset.id);
+        if (e) { e.durSkip = true; await DB.put('entries', e); }
+        renderToday();
+        break;
+      }
+      case 'quick-stool': {
+        const v = act.dataset.v, now = Date.now();
+        const e = { id: uid(), type: 'stool', ts: now, desc: lab(STOOL, v), stool: v, stress: null, mood: null, note: '', created: now, updated: now };
+        await DB.put('entries', e);
+        entries.push(e);
+        if (!meta.firstUse) await setMeta('firstUse', now);
+        buzz(10);
+        flashId = e.id;
+        render();
+        toast('Zapísané: stolica ' + lab(STOOL, v), { label: 'Upraviť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'stool-form': {
+        openEntry();
+        draft = newDraft('stool');
+        renderForm();
         break;
       }
       case 'sym-at': {
