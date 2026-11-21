@@ -129,7 +129,7 @@
 
   // ---------- Najlepšie a najhoršie dni ----------
   function bestWorstHtml() {
-    const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+    const bw = Analysis.bestWorst ? Analysis.bestWorst(FD ? FD.E : entries, FD ? FD.D : days) : null;
     if (!bw) return '';
     const lab2 = r => r.key.startsWith('tag:') ? tagLabel(r.label) : r.label;
     const chips = (list, cls) => list.length ? '<div class="pending">' + list.map(r => `<span class="${cls}">${esc(lab2(r))}</span>`).join('') + '</div>' : '<p class="tiny" style="margin:0">nič výrazné</p>';
@@ -162,10 +162,14 @@
     const fromH = meta.fromH != null ? meta.fromH : 0;
     const toH = meta.toH != null ? meta.toH : 6;
     const minN = meta.minN || 5;
-    const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
+    const fb = insTab !== 'mine' ? focusBar() : '';
+    const fd = focusData(insFocus);
+    FD = fd;
+    OUT = fd.out;
+    const r = Analysis.analyze(fd.E, fd.D, fd.opts);
 
     let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom je horšie a po čom dobre.</p></div><button type="button" class="help-q" data-act="help" data-sec="insights" aria-label="Pomocník">?</button></header>
-      <div class="segbar">${INS_TABS.map(([k, l]) => `<button type="button" class="${k === insTab ? 'on' : ''}" data-ins="${k}">${l}</button>`).join('')}</div>`;
+      <div class="segbar">${INS_TABS.map(([k, l]) => `<button type="button" class="${k === insTab ? 'on' : ''}" data-ins="${k}">${l}</button>`).join('')}</div>` + fb;
     const note = `<p class="foot">Len pomôcka, nie diagnóza. Čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Jedlo ani lieky nevynechávaj bez dohody s lekárom.</p>`;
 
     if (insTab === 'mine') {
@@ -197,8 +201,8 @@
     }
 
     lastR = r;
-    const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
-    const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+    const r2 = OUT.late && toH < 12 ? Analysis.analyze(fd.E, fd.D, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
+    const bw = Analysis.bestWorst ? Analysis.bestWorst(fd.E, fd.D) : null;
     const sus = buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, bw);
     // čo je podozrivé z iného pohľadu (napr. dávka za deň), nepatrí medzi dobre znášané
     const tol = toleratedList(r).filter(x => !sus.some(s => s.id === x.key));
@@ -211,7 +215,7 @@
       h += `<div class="card"><h2>Najlepšie znášané</h2>` + (tol.length
         ? '<div class="pending">' + tol.slice(0, 6).map(x => `<span class="good">${esc(resName(x))}</span>`).join('') + '</div>'
         : '<p class="small muted" style="margin:0">Zatiaľ málo údajov.</p>') +
-        `<p class="tiny" style="margin:12px 0 0">Z ${r.totalN} jedál a ${r.symptomCount} záznamov ťažkostí. Ťažkosti prišli po ${pct(r.baseRate)} jedál.</p></div>`;
+        `<p class="tiny" style="margin:12px 0 0">Z ${r.totalN} jedál a ${r.symptomCount} záznamov (${OUT.label}). Nasledovali po ${pct(r.baseRate)} jedál.</p></div>`;
 
       // pôvodné podrobné výpočty ostávajú, ale zbalené
       h += `<details class="calc"><summary>Všetky výpočty</summary>`;
@@ -263,7 +267,7 @@
       if (goodCtx.length) {
         h += `<div class="card"><h2>Kedy rizikové jedlo vadí menej</h2>` + goodCtx.map(x => resItem(Object.assign({}, x, { level: 'good' }), 'risk')).join('') + '</div>';
       }
-      const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+      const bw = Analysis.bestWorst ? Analysis.bestWorst(FD ? FD.E : entries, FD ? FD.D : days) : null;
       if (bw && bw.onlyBest.length) {
         h += `<div class="card"><h2>Jedlo sa len v najlepších dňoch</h2><p class="tiny" style="margin:0 0 8px">Najlepšie dni: ${bw.best.map(fmtDayHead).join(', ')}.</p>
           <div class="pending">${bw.onlyBest.map(x => `<span class="good">${esc(x.key.startsWith('tag:') ? tagLabel(x.label) : x.label)}</span>`).join('')}</div></div>`;
@@ -272,6 +276,7 @@
 
     if (insTab === 'days') {
       h += trendHtml();
+      if (insFocus === 'all') h += medsHtml();
       if (r.loads && r.loads.length) {
         h += `<div class="card"><h2>Dávka za deň</h2><p class="tiny" style="margin:0 0 6px">Pri intoleranciách rozhoduje množstvo. Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Veľká porcia sa ráta viac, s enzýmom menej.</p>`;
         h += resList(r.loads, 'load');

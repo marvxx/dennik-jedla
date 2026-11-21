@@ -89,6 +89,18 @@
     const hs = t.closest('[data-hsec]');
     if (hs) { jumpHelp(hs.dataset.hsec); return; }
 
+    const th = t.closest('[data-theme-set]');
+    if (th) {
+      const v = th.dataset.themeSet;
+      try { if (v === 'auto') localStorage.removeItem('dennik-theme'); else localStorage.setItem('dennik-theme', v); } catch (_) { /* nič */ }
+      applyTheme(v);
+      renderSettings();
+      return;
+    }
+
+    const fc = t.closest('[data-focus]');
+    if (fc) { insFocus = fc.dataset.focus; renderInsights(); return; }
+
     const ins = t.closest('[data-ins]');
     if (ins) { insTab = ins.dataset.ins; renderInsights(); return; }
 
@@ -490,7 +502,17 @@
     }
     else if (t.id === 'f-note') draft.note = t.value;
     else if (t.id === 'f-amount') draft.amount = t.value;
-    else if (t.id === 'q') { searchQ = t.value; renderSearch(); }
+    else if (t.id === 'q') {
+      searchQ = t.value;
+      renderSearch();
+      const hits = searchMatches();
+      if (hits && hits.length) {
+        const inMonth = hits.some(e => { const d = parseDay(dayOf(e.ts)); return d.getFullYear() === calMonth.getFullYear() && d.getMonth() === calMonth.getMonth(); });
+        if (!inMonth) { const last = parseDay(dayOf(Math.max(...hits.map(e => e.ts)))); calMonth = new Date(last.getFullYear(), last.getMonth(), 1); }
+      }
+      const cal = $('.card.cal');
+      if (cal) cal.outerHTML = renderCalendar();
+    }
     else if (t.id === 'help-q') filterHelp(t.value);
     else if (t.id === 'f-duration') {
       draft.duration = t.value;

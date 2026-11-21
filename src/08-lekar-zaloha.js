@@ -245,6 +245,9 @@
         ${srow('help', 'q', 'accent', 'Pomocník', 'Čo znamená ktorá časť aplikácie')}
         ${srow('welcome', 'phone', 'food', 'Úvod znova', 'Krátke predstavenie denníka')}
       </div>
+      <h2 class="sub">Vzhľad</h2>
+      <div class="segbar theme-seg">${[['auto', 'Podľa telefónu'], ['light', 'Svetlý'], ['dark', 'Tmavý']].map(([k, l]) =>
+        `<button type="button" class="${savedTheme() === k ? 'on' : ''}" data-theme-set="${k}">${l}</button>`).join('')}</div>
       <h2 class="sub">Moje jedlo</h2><div class="dayrows">
         ${srow('intol-edit', 'warn', 'sym', 'Moje intolerancie', esc(risk.join(', ')) || 'Zatiaľ nič vybrané', risk.length || '')}
         ${srow('favs', 'star', 'sun', 'Obľúbené jedlá', '', favorites().length || '')}

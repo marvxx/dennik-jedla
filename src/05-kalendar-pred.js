@@ -29,7 +29,7 @@
   function renderList() {
     const el = $('#view-list');
     let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div><button type="button" class="help-q" data-act="help" data-sec="list" aria-label="Pomocník">?</button></header>
-      <input type="search" id="q" value="${esc(searchQ)}" placeholder="Hľadať v denníku, napr. jogurt" enterkeyhint="search"><div id="q-res"></div>` + renderCalendar();
+      <input type="search" id="q" value="${esc(searchQ)}" placeholder="Hľadať v denníku, napr. jogurt" enterkeyhint="search">` + renderCalendar() + '<div id="q-res"></div>';
     const byDay = new Map();
     entries.forEach(e => {
       const d = dayOf(e.ts);
@@ -57,6 +57,15 @@
   }
 
   let searchQ = '';
+  // pod kalendárom: v koľkých dňoch sa hľadané jedlo vyskytlo a koľko z nich bolo s ťažkosťami
+  function calSearchNote(hl, ix) {
+    const n = hl.size, bad = [...hl].filter(d => ix.sev[d]).length;
+    const sym = Object.keys(ix.sev).length, all = ix.has.size;
+    const base = all ? Math.round(sym / all * 100) : 0;
+    return `<p class="cal-hl"><i></i><span><b>„${esc(searchQ.trim())}“: ${n} ${n === 1 ? 'deň' : n < 5 ? 'dni' : 'dní'}</b>, z toho s ťažkosťami ${bad}
+      ${n ? `(${Math.round(bad / n * 100)} %, inak ${base} % dní)` : ''}</span></p>`;
+  }
+
   function renderSearch() {
     const box = $('#q-res');
     if (!box) return;
@@ -129,8 +138,18 @@
   let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   const MONTHS = ['január', 'február', 'marec', 'apríl', 'máj', 'jún', 'júl', 'august', 'september', 'október', 'november', 'december'];
 
+  // záznamy, ktoré zodpovedajú hľadanému slovu (aj podľa skupiny, napr. „mliečne“)
+  function searchMatches() {
+    const q = Analysis.norm(searchQ.trim());
+    if (q.length < 2) return null;
+    return entries.filter(e => Analysis.norm([e.desc, e.note, (e.kinds || []).join(' '),
+      e.type === 'food' ? Analysis.mealTags(e).map(tagLabel).join(' ') : ''].join(' ')).includes(q));
+  }
+
   function renderCalendar() {
     const y = calMonth.getFullYear(), mo = calMonth.getMonth();
+    const hits = searchMatches();
+    const hl = hits ? new Set(hits.map(e => dayOf(e.ts))) : null;
     const first = new Date(y, mo, 1);
     const daysIn = new Date(y, mo + 1, 0).getDate();
     const offset = (first.getDay() + 6) % 7; // pondelok = 0
@@ -142,7 +161,7 @@
       const d = y + '-' + pad(mo + 1) + '-' + pad(n);
       const v = days[d] || {};
       const cls = 'c-' + dayLevel(d, ix);
-      cells += `<button type="button" class="cal-d ${cls}${d === today ? ' today' : ''}" data-cal="${d}"${d > today ? ' disabled' : ''}>${n}${v.period ? '<i></i>' : ''}</button>`;
+      cells += `<button type="button" class="cal-d ${cls}${d === today ? ' today' : ''}${hl && hl.has(d) ? ' hl' : ''}" data-cal="${d}"${d > today ? ' disabled' : ''}>${n}${v.period ? '<i></i>' : ''}</button>`;
     }
     const isCur = y === new Date().getFullYear() && mo === new Date().getMonth();
     return `<div class="card cal">
@@ -150,6 +169,7 @@
         <b>${MONTHS[mo]} ${y}</b>
         <button type="button" class="btn ghost small" data-act="cal-next" aria-label="Ďalší mesiac"${isCur ? ' disabled' : ''}>›</button></div>
       <div class="cal-grid">${['Po', 'Ut', 'St', 'Št', 'Pi', 'So', 'Ne'].map(x => `<span class="cal-w">${x}</span>`).join('')}${cells}</div>
+      ${hl ? calSearchNote(hl, ix) : ''}
       <div class="cal-legend"><span><i class="c-ok"></i>bez ťažkostí</span><span><i class="c-low"></i>slabé</span><span><i class="c-mid"></i>stredné</span><span><i class="c-high"></i>silné</span><span><i class="dot"></i>menštruácia</span></div>
     </div>`;
   }

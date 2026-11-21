@@ -35,7 +35,8 @@
     if (v.sleep != null) parts.push('spánok ' + lab(SLEEP, v.sleep));
     if (v.period != null) parts.push(v.period ? 'menštruácia' : 'bez menštruácie');
     if (v.activity != null) parts.push('pohyb ' + lab(ACTIVITY, v.activity));
-    if (v.water != null) parts.push('pitie ' + lab(WATER, v.water));
+    if (v.glasses) parts.push('voda ' + v.glasses + '×');
+    else if (v.water != null) parts.push('pitie ' + lab(WATER, v.water));
     return parts.join(' · ');
   }
 

@@ -3,7 +3,21 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.5';
+  const APP_VERSION = '3.6';
+
+  // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
+  const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
+  function applyTheme(t) {
+    const root = document.documentElement;
+    if (t === 'light' || t === 'dark') root.dataset.theme = t; else delete root.dataset.theme;
+    // farba stavového riadku
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+      const dark = /dark/.test(m.media || '');
+      m.content = t === 'light' || t === 'dark' ? THEME_BG[t] : THEME_BG[dark ? 'dark' : 'light'];
+    });
+  }
+  const savedTheme = () => { try { return localStorage.getItem('dennik-theme') || 'auto'; } catch (_) { return 'auto'; } };
+  applyTheme(savedTheme());
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -65,8 +79,8 @@
   const WATER = [['malo', 'málo'], ['ok', 'dosť']];
   const DAY_FIELDS = [
     ['sleep', 'Spánok', SLEEP, 'str'], ['period', 'Menštruácia', PERIOD, 'bool'],
-    ['activity', 'Pohyb', ACTIVITY, 'str'], ['water', 'Pitie', WATER, 'str'],
-  ];
+    ['activity', 'Pohyb', ACTIVITY, 'str'],
+  ];   // pitie sa počíta pohármi vody (karta Voda a káva); staré „málo/dosť“ ostáva v údajoch
   const CTX_LABELS = {
     'rushed': 'jedlo v zhone', 'portion:velka': 'veľká porcia',
     'stress:high': 'stres 4–5 pri jedle', 'mood:low': 'zlá nálada pri jedle',
@@ -604,7 +618,8 @@
     if (v.sleep != null) parts.push('spánok ' + lab(SLEEP, v.sleep));
     if (v.period != null) parts.push(v.period ? 'menštruácia' : 'bez menštruácie');
     if (v.activity != null) parts.push('pohyb ' + lab(ACTIVITY, v.activity));
-    if (v.water != null) parts.push('pitie ' + lab(WATER, v.water));
+    if (v.glasses) parts.push('voda ' + v.glasses + '×');
+    else if (v.water != null) parts.push('pitie ' + lab(WATER, v.water));
     return parts.join(' · ');
   }
 
@@ -1431,7 +1446,7 @@
   function renderList() {
     const el = $('#view-list');
     let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div><button type="button" class="help-q" data-act="help" data-sec="list" aria-label="Pomocník">?</button></header>
-      <input type="search" id="q" value="${esc(searchQ)}" placeholder="Hľadať v denníku, napr. jogurt" enterkeyhint="search"><div id="q-res"></div>` + renderCalendar();
+      <input type="search" id="q" value="${esc(searchQ)}" placeholder="Hľadať v denníku, napr. jogurt" enterkeyhint="search">` + renderCalendar() + '<div id="q-res"></div>';
     const byDay = new Map();
     entries.forEach(e => {
       const d = dayOf(e.ts);
@@ -1459,6 +1474,15 @@
   }
 
   let searchQ = '';
+  // pod kalendárom: v koľkých dňoch sa hľadané jedlo vyskytlo a koľko z nich bolo s ťažkosťami
+  function calSearchNote(hl, ix) {
+    const n = hl.size, bad = [...hl].filter(d => ix.sev[d]).length;
+    const sym = Object.keys(ix.sev).length, all = ix.has.size;
+    const base = all ? Math.round(sym / all * 100) : 0;
+    return `<p class="cal-hl"><i></i><span><b>„${esc(searchQ.trim())}“: ${n} ${n === 1 ? 'deň' : n < 5 ? 'dni' : 'dní'}</b>, z toho s ťažkosťami ${bad}
+      ${n ? `(${Math.round(bad / n * 100)} %, inak ${base} % dní)` : ''}</span></p>`;
+  }
+
   function renderSearch() {
     const box = $('#q-res');
     if (!box) return;
@@ -1531,8 +1555,18 @@
   let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   const MONTHS = ['január', 'február', 'marec', 'apríl', 'máj', 'jún', 'júl', 'august', 'september', 'október', 'november', 'december'];
 
+  // záznamy, ktoré zodpovedajú hľadanému slovu (aj podľa skupiny, napr. „mliečne“)
+  function searchMatches() {
+    const q = Analysis.norm(searchQ.trim());
+    if (q.length < 2) return null;
+    return entries.filter(e => Analysis.norm([e.desc, e.note, (e.kinds || []).join(' '),
+      e.type === 'food' ? Analysis.mealTags(e).map(tagLabel).join(' ') : ''].join(' ')).includes(q));
+  }
+
   function renderCalendar() {
     const y = calMonth.getFullYear(), mo = calMonth.getMonth();
+    const hits = searchMatches();
+    const hl = hits ? new Set(hits.map(e => dayOf(e.ts))) : null;
     const first = new Date(y, mo, 1);
     const daysIn = new Date(y, mo + 1, 0).getDate();
     const offset = (first.getDay() + 6) % 7; // pondelok = 0
@@ -1544,7 +1578,7 @@
       const d = y + '-' + pad(mo + 1) + '-' + pad(n);
       const v = days[d] || {};
       const cls = 'c-' + dayLevel(d, ix);
-      cells += `<button type="button" class="cal-d ${cls}${d === today ? ' today' : ''}" data-cal="${d}"${d > today ? ' disabled' : ''}>${n}${v.period ? '<i></i>' : ''}</button>`;
+      cells += `<button type="button" class="cal-d ${cls}${d === today ? ' today' : ''}${hl && hl.has(d) ? ' hl' : ''}" data-cal="${d}"${d > today ? ' disabled' : ''}>${n}${v.period ? '<i></i>' : ''}</button>`;
     }
     const isCur = y === new Date().getFullYear() && mo === new Date().getMonth();
     return `<div class="card cal">
@@ -1552,6 +1586,7 @@
         <b>${MONTHS[mo]} ${y}</b>
         <button type="button" class="btn ghost small" data-act="cal-next" aria-label="Ďalší mesiac"${isCur ? ' disabled' : ''}>›</button></div>
       <div class="cal-grid">${['Po', 'Ut', 'St', 'Št', 'Pi', 'So', 'Ne'].map(x => `<span class="cal-w">${x}</span>`).join('')}${cells}</div>
+      ${hl ? calSearchNote(hl, ix) : ''}
       <div class="cal-legend"><span><i class="c-ok"></i>bez ťažkostí</span><span><i class="c-low"></i>slabé</span><span><i class="c-mid"></i>stredné</span><span><i class="c-high"></i>silné</span><span><i class="dot"></i>menštruácia</span></div>
     </div>`;
   }
@@ -1656,14 +1691,14 @@
         if (!s.id.includes(':') || s.id.startsWith('tag:')) {
           return x.level === 'none'
             ? (hasBad(s, 'load') ? 'Po jednom jedle sa to neprejaví. Vadí až väčšie množstvo za deň.' : `Po jednotlivých jedlách súvis nevidno (${w}).`)
-            : `Po ${w} takých jedál prišli do ${(lastR && lastR.opts.toH) || 6} h ťažkosti. Po ostatných jedlách v ${o} prípadov.`;
+            : `Po ${w} takých jedál ${OUT.after}. Po ostatných jedlách v ${o} prípadov.`;
         }
-        return `Po ${w} takých jedál prišli ťažkosti. Po ostatných v ${o} prípadov.`;
-      case 'load': return x.level === 'none' ? `Ani pri 2 a viac porciách za deň sa ťažkosti nezvyšujú (${w} dní).`
-        : `V dni s 2 a viac porciami boli ťažkosti ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
-      case 'late': return `Na druhý deň (12–48 h) prišli ťažkosti po ${w} takých jedál. Inak v ${o} prípadov.`;
-      case 'stack': return `Keď sa to za 12 h zjedlo 2× a viac, prišli ťažkosti po ${w} jedál. Pri 1× v ${o} prípadov.`;
-      case 'day': return `V takéto dni boli ťažkosti ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
+        return `Po ${w} takých jedál ${OUT.afterShort}. Po ostatných v ${o} prípadov.`;
+      case 'load': return x.level === 'none' ? `Ani pri 2 a viac porciách za deň nie je rozdiel (${w} dní).`
+        : `V dni s 2 a viac porciami ${OUT.dayHad} ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
+      case 'late': return `Na druhý deň (12–48 h) ${OUT.afterShort} po ${w} takých jedál. Inak v ${o} prípadov.`;
+      case 'stack': return `Keď sa to za 12 h zjedlo 2× a viac, ${OUT.afterShort} po ${w} jedál. Pri 1× v ${o} prípadov.`;
+      case 'day': return `V takéto dni ${OUT.dayHad} ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
       case 'worst': return `Bolo v ${x.n} z ${x.of} najhorších dní a v žiadnom z najlepších.`;
       case 'best': return `Bolo v ${x.n} z ${x.of} najlepších dní a v žiadnom z najhorších.`;
       case 'both': return doseOnly(s) ? 'Bolo aj v dobrých dňoch. Rozhoduje teda skôr množstvo než samotná surovina.' : 'Bolo v najlepších aj najhorších dňoch.';
@@ -1703,14 +1738,15 @@
   function openSuspect(id) {
     const s = lastSus.get(id);
     if (!s) return;
-    const ev = Analysis.evidence(entries, days, id, Date.now());
+    const fdx = FD || focusData('all');
+    const ev = Analysis.evidence(fdx.E, fdx.D, id, Date.now());
     const testable = s.id.startsWith('tag:') || !s.id.includes(':');
     const order = ['meal', 'load', 'late', 'stack', 'day', 'worst', 'best', 'both'];
     const sigs = s.sig.slice().sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
     let h = `<div class="sheet-head"><h2>${esc(s.name)}</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>
       <p class="verdict v-${s.verdict}">${VERDICT_TXT[s.verdict]}${s.top ? ' · ' + susRatio(s) : ''}</p>`;
     h += grp('Čo ukazujú údaje', '<ul class="why">' + sigs.map(g => `<li class="${SIG_W[g.kind] && g.x.level !== 'none' ? 'bad' : g.kind === 'best' ? 'good' : ''}">${sigSentence(g, s)}</li>`).join('') + '</ul>');
-    if (ev && ev.mine.n >= 3) {
+    if (ev && ev.mine.n >= 3 && OUT.delay) {
       const lab = ['do 1 h', '1–2 h', '2–4 h', '4–8 h', '8–24 h'];
       const rows = ev.buckets.map((_, i) => `<span>${lab[i]}</span>
         <div class="bar2"><i class="m" style="width:${Math.round(ev.mine.b[i] * 100)}%"></i><i class="o" style="width:${Math.round(ev.rest.b[i] * 100)}%"></i></div>
@@ -1726,7 +1762,7 @@
         const win = (lastR && lastR.opts.toH) || 6;
         const after = d => 'o ' + (d < 1 ? Math.max(1, Math.round(d * 60)) + ' min' : Math.round(d) + ' h');
         const out = !x.ripe && x.delay == null ? ['wait', 'čaká sa'] : x.delay != null && x.delay < 24
-          ? [x.delay <= win ? 'hit' : 'wait', 'ťažkosti ' + after(x.delay) + (x.sev ? ' · ' + x.sev + '/10' : '')]
+          ? [x.delay <= win ? 'hit' : 'wait', OUT.ev + ' ' + after(x.delay) + (x.sev && OUT.delay ? ' · ' + x.sev + '/10' : '')]
           : x.known ? ['ok', 'bez ťažkostí'] : ['wait', 'deň nezapísaný'];
         return `<button type="button" class="ev" data-goday="${dayOf(x.ts)}"><span class="ev-t">${esc(x.desc)}<small>${fmtDayHead(dayOf(x.ts))} · ${fmtTime(x.ts)}</small></span>
           <span class="ev-o ${out[0]}">${out[1]}</span></button>`;
@@ -1862,6 +1898,8 @@
   // Spojený verdikt s aktuálnym nastavením výpočtu (pre Dnes a prehľad pre lekára)
   function computeSuspects() {
     const fromH = meta.fromH != null ? meta.fromH : 0, toH = meta.toH != null ? meta.toH : 6, minN = meta.minN || 5;
+    FD = focusData('all');
+    OUT = FD.out;
     const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
     if (r.totalN < 10 || r.symptomCount < 3) return [];
     lastR = r;
@@ -1869,6 +1907,81 @@
     return buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null);
   }
 
+
+  // ---------- Zameranie výsledkov: všetky ťažkosti, jeden druh, alebo stolica ----------
+  // Výpočty sú rovnaké; mení sa len, čo sa ráta ako „ťažkosti“. Pri jednom druhu sú ostatné
+  // ťažkosti dňom „bez tohto druhu“. Pri stolici sa ráta riedka (Bristol 5–7) alebo tvrdá (1–2)
+  // stolica 6–36 h po jedle a vyhodnocujú sa len dni, keď je stolica zapísaná.
+  let insFocus = 'all';
+  let FD = null;   // údaje posledného výpočtu (podľa zamerania)
+  const LOOSE = new Set(['b5', 'b6', 'b7', 'makka', 'hnacka']);
+  const HARD = new Set(['b1', 'b2', 'tvrda']);
+  const STOOL_SEV = { b1: 6, b2: 4, b5: 4, b6: 6, b7: 8, makka: 4, hnacka: 7, tvrda: 5 };
+
+  // jazyk výsledkov podľa zamerania
+  let OUT = outFor('all', 6);
+  function outFor(f, toH) {
+    if (f.startsWith('stool:')) {
+      const w = f === 'stool:loose' ? 'riedka' : 'tvrdá';
+      return { after: `bola o 6–36 h ${w} stolica`, afterShort: `bola ${w} stolica`, dayHad: `bola ${w} stolica`, ev: `${w} stolica`, late: false, delay: false, label: `${w} stolica` };
+    }
+    const k = f.startsWith('kind:') ? ' (' + f.slice(5) + ')' : '';
+    return { after: `prišli do ${toH} h ťažkosti${k}`, afterShort: `prišli ťažkosti${k}`, dayHad: `boli ťažkosti${k}`, ev: 'ťažkosti' + k, late: true, delay: true, label: k ? f.slice(5) : 'všetky ťažkosti' };
+  }
+
+  // aké zamerania majú zmysel: druh aspoň 3×, stolica aspoň 3×
+  function focusOptions() {
+    const opts = [['all', 'Všetky']];
+    const kc = {};
+    entries.filter(e => e.type === 'symptom').forEach(e => (e.kinds || []).forEach(k => { kc[k] = (kc[k] || 0) + 1; }));
+    Object.entries(kc).filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).forEach(([k]) => opts.push(['kind:' + k, k]));
+    const st = entries.filter(e => e.type === 'stool');
+    if (st.filter(e => LOOSE.has(e.stool)).length >= 3) opts.push(['stool:loose', 'riedka stolica']);
+    if (st.filter(e => HARD.has(e.stool)).length >= 3) opts.push(['stool:hard', 'tvrdá stolica']);
+    return opts;
+  }
+
+  // údaje a nastavenie výpočtu pre zameranie
+  function focusData(f) {
+    const fromH = meta.fromH != null ? meta.fromH : 0, toH = meta.toH != null ? meta.toH : 6, minN = meta.minN || 5;
+    const base = { fromH, toH, minN, riskTags: riskTags() };
+    if (!f || f === 'all') return { f: 'all', E: entries, D: days, opts: base, out: outFor('all', toH) };
+    if (f.startsWith('kind:')) {
+      const k = f.slice(5);
+      const has = e => (e.kinds || []).includes(k);
+      const E = entries.filter(e => e.type !== 'symptom' || has(e));
+      const D = Object.assign({}, days);
+      // deň s inými ťažkosťami je pre tento druh „bez ťažkostí“
+      const withK = new Set(entries.filter(e => e.type === 'symptom' && has(e)).map(e => dayOf(e.ts)));
+      entries.filter(e => e.type === 'symptom' && !has(e)).forEach(e => {
+        const d = dayOf(e.ts);
+        if (!withK.has(d)) D[d] = Object.assign({ date: d }, D[d], { noSymptoms: true });
+      });
+      return { f, E, D, opts: base, out: outFor(f, toH) };
+    }
+    // stolica: riedka alebo tvrdá stolica ako „ťažkosti“
+    const set = f === 'stool:loose' ? LOOSE : HARD;
+    const pseudo = entries.filter(e => e.type === 'stool' && set.has(e.stool))
+      .map(e => ({ id: 'st-' + e.id, type: 'symptom', ts: e.ts, desc: e.desc, severity: STOOL_SEV[e.stool] || 5, kinds: [] }));
+    const E = entries.filter(e => e.type !== 'symptom' && e.type !== 'stool').concat(pseudo);
+    const D = {};
+    Object.entries(days).forEach(([d, v]) => { const c = Object.assign({}, v); delete c.noSymptoms; D[d] = c; });
+    const hitDays = new Set(pseudo.map(e => dayOf(e.ts)));
+    entries.filter(e => e.type === 'stool').forEach(e => {
+      const d = dayOf(e.ts);
+      if (!hitDays.has(d)) D[d] = Object.assign({ date: d }, D[d], { noSymptoms: true });
+    });
+    return { f, E, D, opts: Object.assign({}, base, { fromH: 6, toH: 36 }), out: outFor(f, 36) };
+  }
+
+  // výber zamerania nad výsledkami
+  function focusBar() {
+    const opts = focusOptions();
+    if (opts.length < 2) return '';
+    if (!opts.some(([k]) => k === insFocus)) insFocus = 'all';
+    return `<div class="focus" role="group" aria-label="Zameranie výsledkov"><span class="tiny">Čo vyhodnotiť:</span>
+      <div class="chips focus-chips">${opts.map(([k, l]) => `<button type="button" class="chip${k === insFocus ? ' on' : ''}" data-focus="${esc(k)}">${esc(l)}</button>`).join('')}</div></div>`;
+  }
   // ---------- Týždenný prehľad ----------
   // V nedeľu večer, v pondelok a utorok ukáže zhrnutie posledného týždňa v porovnaní s predošlým.
   function weekStats(endDay) {
@@ -2000,7 +2113,7 @@
 
   // ---------- Najlepšie a najhoršie dni ----------
   function bestWorstHtml() {
-    const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+    const bw = Analysis.bestWorst ? Analysis.bestWorst(FD ? FD.E : entries, FD ? FD.D : days) : null;
     if (!bw) return '';
     const lab2 = r => r.key.startsWith('tag:') ? tagLabel(r.label) : r.label;
     const chips = (list, cls) => list.length ? '<div class="pending">' + list.map(r => `<span class="${cls}">${esc(lab2(r))}</span>`).join('') + '</div>' : '<p class="tiny" style="margin:0">nič výrazné</p>';
@@ -2033,10 +2146,14 @@
     const fromH = meta.fromH != null ? meta.fromH : 0;
     const toH = meta.toH != null ? meta.toH : 6;
     const minN = meta.minN || 5;
-    const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
+    const fb = insTab !== 'mine' ? focusBar() : '';
+    const fd = focusData(insFocus);
+    FD = fd;
+    OUT = fd.out;
+    const r = Analysis.analyze(fd.E, fd.D, fd.opts);
 
     let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom je horšie a po čom dobre.</p></div><button type="button" class="help-q" data-act="help" data-sec="insights" aria-label="Pomocník">?</button></header>
-      <div class="segbar">${INS_TABS.map(([k, l]) => `<button type="button" class="${k === insTab ? 'on' : ''}" data-ins="${k}">${l}</button>`).join('')}</div>`;
+      <div class="segbar">${INS_TABS.map(([k, l]) => `<button type="button" class="${k === insTab ? 'on' : ''}" data-ins="${k}">${l}</button>`).join('')}</div>` + fb;
     const note = `<p class="foot">Len pomôcka, nie diagnóza. Čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Jedlo ani lieky nevynechávaj bez dohody s lekárom.</p>`;
 
     if (insTab === 'mine') {
@@ -2068,8 +2185,8 @@
     }
 
     lastR = r;
-    const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
-    const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+    const r2 = OUT.late && toH < 12 ? Analysis.analyze(fd.E, fd.D, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
+    const bw = Analysis.bestWorst ? Analysis.bestWorst(fd.E, fd.D) : null;
     const sus = buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, bw);
     // čo je podozrivé z iného pohľadu (napr. dávka za deň), nepatrí medzi dobre znášané
     const tol = toleratedList(r).filter(x => !sus.some(s => s.id === x.key));
@@ -2082,7 +2199,7 @@
       h += `<div class="card"><h2>Najlepšie znášané</h2>` + (tol.length
         ? '<div class="pending">' + tol.slice(0, 6).map(x => `<span class="good">${esc(resName(x))}</span>`).join('') + '</div>'
         : '<p class="small muted" style="margin:0">Zatiaľ málo údajov.</p>') +
-        `<p class="tiny" style="margin:12px 0 0">Z ${r.totalN} jedál a ${r.symptomCount} záznamov ťažkostí. Ťažkosti prišli po ${pct(r.baseRate)} jedál.</p></div>`;
+        `<p class="tiny" style="margin:12px 0 0">Z ${r.totalN} jedál a ${r.symptomCount} záznamov (${OUT.label}). Nasledovali po ${pct(r.baseRate)} jedál.</p></div>`;
 
       // pôvodné podrobné výpočty ostávajú, ale zbalené
       h += `<details class="calc"><summary>Všetky výpočty</summary>`;
@@ -2134,7 +2251,7 @@
       if (goodCtx.length) {
         h += `<div class="card"><h2>Kedy rizikové jedlo vadí menej</h2>` + goodCtx.map(x => resItem(Object.assign({}, x, { level: 'good' }), 'risk')).join('') + '</div>';
       }
-      const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+      const bw = Analysis.bestWorst ? Analysis.bestWorst(FD ? FD.E : entries, FD ? FD.D : days) : null;
       if (bw && bw.onlyBest.length) {
         h += `<div class="card"><h2>Jedlo sa len v najlepších dňoch</h2><p class="tiny" style="margin:0 0 8px">Najlepšie dni: ${bw.best.map(fmtDayHead).join(', ')}.</p>
           <div class="pending">${bw.onlyBest.map(x => `<span class="good">${esc(x.key.startsWith('tag:') ? tagLabel(x.label) : x.label)}</span>`).join('')}</div></div>`;
@@ -2143,6 +2260,7 @@
 
     if (insTab === 'days') {
       h += trendHtml();
+      if (insFocus === 'all') h += medsHtml();
       if (r.loads && r.loads.length) {
         h += `<div class="card"><h2>Dávka za deň</h2><p class="tiny" style="margin:0 0 6px">Pri intoleranciách rozhoduje množstvo. Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Veľká porcia sa ráta viac, s enzýmom menej.</p>`;
         h += resList(r.loads, 'load');
@@ -2258,6 +2376,32 @@
       <svg class="rchart tr" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Počet dní s ťažkosťami v jednotlivých týždňoch">${svg}</svg>
       <p class="tiny" style="margin:2px 0 0">Stĺpec = počet dní s ťažkosťami v týždni (zo 7), farba = priemerná sila. Bledý stĺpec = málo zápisov.</p>
       ${verdict ? `<p class="small" style="margin:10px 0 0">${verdict}</p>` : ''}${evList}</div>`;
+  }
+
+  // ---------- Pomáhajú lieky a doplnky? ----------
+  function medsHtml() {
+    const list = Analysis.medEffects(entries, days, Date.now());
+    if (!list.length) return '';
+    const p = x => x.n ? x.hit / x.n : 0;
+    const rows = list.map(m => {
+      const lines = [];
+      let tone = '';
+      if (m.regular && m.before.n >= 5 && m.since.n >= 5) {
+        const d = p(m.since) - p(m.before);
+        const word = d <= -0.15 ? 'Odkedy ho užívaš, je ťažkostí menej.' : d >= 0.15 ? 'Odkedy ho užívaš, je ťažkostí viac.' : 'Zatiaľ bez zjavného rozdielu.';
+        tone = d <= -0.15 ? 'good' : d >= 0.15 ? 'bad' : '';
+        lines.push(`<b>${word}</b> Pred začatím ťažkosti ${m.before.hit} zo ${m.before.n} dní (${pct(p(m.before))}), odvtedy ${m.since.hit} z ${m.since.n} (${pct(p(m.since))}).`);
+      } else if (m.with.n >= 3 && m.without.n >= 3) {
+        lines.push(`V dni s ním ťažkosti ${m.with.hit} z ${m.with.n} (${pct(p(m.with))}), bez neho ${m.without.hit} z ${m.without.n} (${pct(p(m.without))}).`);
+      }
+      if (m.acute >= 2) {
+        lines.push(`Pri ťažkostiach užité ${m.acute}×. Ďalšie ťažkosti do 4 h potom prišli ${m.again}×.`);
+      }
+      if (!lines.length) lines.push(`Užité ${m.uses}× v ${m.days} dňoch. Na porovnanie treba viac údajov.`);
+      return `<div class="med-row ${tone}"><b class="med-name">${esc(m.name)}</b>${lines.map(l => `<p>${l}</p>`).join('')}</div>`;
+    }).join('');
+    return `<div class="card meds"><h2>Lieky a doplnky</h2>${rows}
+      <p class="tiny" style="margin:10px 0 0">Lieky sa často berú práve pri ťažkostiach, preto „viac“ nemusí znamenať, že škodia. Lieky nevysadzuj bez lekára.</p></div>`;
   }
   // ---------- Prehľad pre lekára ----------
   function buildReport() {
@@ -2506,6 +2650,9 @@
         ${srow('help', 'q', 'accent', 'Pomocník', 'Čo znamená ktorá časť aplikácie')}
         ${srow('welcome', 'phone', 'food', 'Úvod znova', 'Krátke predstavenie denníka')}
       </div>
+      <h2 class="sub">Vzhľad</h2>
+      <div class="segbar theme-seg">${[['auto', 'Podľa telefónu'], ['light', 'Svetlý'], ['dark', 'Tmavý']].map(([k, l]) =>
+        `<button type="button" class="${savedTheme() === k ? 'on' : ''}" data-theme-set="${k}">${l}</button>`).join('')}</div>
       <h2 class="sub">Moje jedlo</h2><div class="dayrows">
         ${srow('intol-edit', 'warn', 'sym', 'Moje intolerancie', esc(risk.join(', ')) || 'Zatiaľ nič vybrané', risk.length || '')}
         ${srow('favs', 'star', 'sun', 'Obľúbené jedlá', '', favorites().length || '')}
@@ -2640,7 +2787,7 @@
     ['today', 'Chýba obed? (raňajky, večera)', 'Ak v dni so záznamami chýba bežné jedlo, denník sa spýta. Ťuknutím ho zapíšeš s typickým časom, ktorý môžeš zmeniť. Ak si naozaj nejedla, nič nerob.'],
     ['today', 'Pravidelné', 'Veci, ktoré si nastavila na každý deň (napr. ranná káva, probiotiká). Keď sa blíži ich čas, zapíšeš ich jedným ťuknutím.'],
     ['today', 'Voda a káva', 'Ťuknutím na ＋ pridáš pohár vody alebo zapíšeš kávu (takú, akú piješ najčastejšie) s aktuálnym časom. Menej ako 5 pohárov za deň sa vo vyhodnotení ráta ako málo pitia. Kávu môžeš upraviť ako každý iný záznam.'],
-    ['today', 'Aký bol dnešný deň?', 'Spánok, menštruácia, pohyb a pitie raz za deň. Nepovinné, ale pomáha zistiť, či ťažkosti nesúvisia s dňom, nielen s jedlom.'],
+    ['today', 'Aký bol dnešný deň?', 'Spánok, menštruácia a pohyb raz za deň (pitie sa počíta v karte Voda a káva). Nepovinné, ale pomáha zistiť, či ťažkosti nesúvisia s dňom, nielen s jedlom.'],
     ['today', 'Deň bez ťažkostí', 'Ťukni večer, ak v ten deň nebolo nič. Je to rovnako dôležité ako zapisovať ťažkosti: bez toho denník nevie, či bol deň pokojný, alebo si len nezapisovala.'],
     ['today', 'Tvoj týždeň', 'V nedeľu večer až v utorok zhrnutie týždňa: koľko dní bolo s ťažkosťami v porovnaní s minulým týždňom a jedna rada. Krížikom ho skryješ.'],
     ['today', 'Zavádzanie (pruh hore)', 'Prebieha opätovné zavedenie: každý deň ti povie, akú porciu zjesť. Po zjedení ťukni „Zjedla som“ a sleduj ťažkosti. Viac v časti Súvislosti – Moje.'],
@@ -2660,7 +2807,7 @@
     ['entry', 'Skenovanie čiarového kódu', 'Pri balených výrobkoch načíta názov a zloženie z databázy Open Food Facts. Posiela sa tam len číslo kódu.'],
     ['entry', 'Zapísať znova teraz', 'Pri úprave jedla alebo lieku: zapíše to isté s dnešným časom.'],
     ['list', 'Farby v kalendári', 'Zelená = deň bez ťažkostí, žltá, oranžová, červená = slabé, stredné, silné ťažkosti, sivá = zapísané, ale nevieme o ťažkostiach. Ružová bodka = menštruácia.'],
-    ['list', 'Hľadať v denníku', 'Napíš jedlo alebo slovo a ukážu sa všetky záznamy, kde sa vyskytuje.'],
+    ['list', 'Hľadať v denníku', 'Napíš jedlo alebo slovo (aj skupinu, napr. mliečne). Ukážu sa všetky záznamy, kde sa vyskytuje, a v kalendári sa tie dni zvýraznia krúžkom. Pod kalendárom uvidíš, v koľkých z týchto dní boli ťažkosti v porovnaní s ostatnými dňami.'],
     ['insights', 'Hlavné podozrenie', 'Jedlo alebo skupina, ktorá najviac vyzerá, že súvisí s ťažkosťami. Spája všetky výpočty dokopy (po jedle, za deň, na druhý deň, najhoršie dni), aby si výsledky neodporovali.'],
     ['insights', 'Číslo 2,1× (koľkokrát)', '2× znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných. „Výrazne“ znamená, že inak sa ťažkosti v sledovanom čase neobjavili vôbec.'],
     ['insights', 'Bodky: málo údajov, náznak, silnejší vzorec', 'Koľko údajov je za číslom. Jedna bodka je málo, tri sú silnejší vzorec. Pri jednej bodke ešte nič neuzatváraj.'],
@@ -2676,6 +2823,8 @@
     ['insights', 'Na druhý deň (12–48 h)', 'Niektoré intolerancie sa prejavia až neskôr. Tu sú jedlá, po ktorých prišli ťažkosti o 12 až 48 hodín.'],
     ['insights', 'Dávka za deň', 'Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Ak vadí až väčšie množstvo, ukáže sa to tu, aj keď jedno jedlo samo nevadí.'],
     ['insights', 'Je to lepšie?', 'Graf v časti Dni: koľko dní v každom týždni boli ťažkosti (zo 7). Farba stĺpca je priemerná sila. Čísla v krúžkoch pod grafom sú udalosti (začiatok testu, zavádzania, zistenia), aby bolo vidieť, čo sa po nich zmenilo. Pod grafom porovnanie posledných 4 týždňov s predošlými.'],
+    ['insights', 'Lieky a doplnky', 'V časti Dni: pri lieku, ktorý užívaš pravidelne (napr. probiotiká), porovná dni s ťažkosťami pred začatím a odvtedy. Pri lieku, ktorý berieš pri ťažkostiach, ukáže, či potom prišli do 4 h ďalšie ťažkosti. Lieky sa berú často práve pri ťažkostiach, preto „viac“ neznamená, že škodia.'],
+    ['insights', 'Čo vyhodnotiť (zameranie)', 'Riadok nad výsledkami. „Všetky“ hodnotí všetky ťažkosti spolu. Vyber jeden druh (napr. pálenie záhy) a uvidíš, po čom prichádza práve on: rôzne ťažkosti mávajú rôzne príčiny. „Riedka stolica“ a „tvrdá stolica“ hľadajú, po čom prichádza taká stolica o 6 až 36 hodín. Zobrazí sa len to, čo máš zapísané aspoň 3×.'],
     ['insights', 'Okolnosti dňa', 'Dni so zlým spánkom, menštruáciou, bez pohybu, s málo pitia, a fázy cyklu: dni pred menštruáciou (luteálna fáza) a po nej (folikulárna).'],
     ['insights', 'Najhoršie a najlepšie dni', 'Čo sa jedlo len v najhorších dňoch a čo len v najlepších. „Bolo v oboch“ zvyčajne nerozhoduje, pokiaľ nevadí až väčšie množstvo.'],
     ['mine', 'Moje zistenia', 'Tvoj vlastný zoznam: čo vadí, čo nevadí a čo je podozrivé. Zapíšeš ho z výsledkov tlačidlom „Zapísať zistenie“ alebo ručne.'],
@@ -2816,6 +2965,18 @@
 
     const hs = t.closest('[data-hsec]');
     if (hs) { jumpHelp(hs.dataset.hsec); return; }
+
+    const th = t.closest('[data-theme-set]');
+    if (th) {
+      const v = th.dataset.themeSet;
+      try { if (v === 'auto') localStorage.removeItem('dennik-theme'); else localStorage.setItem('dennik-theme', v); } catch (_) { /* nič */ }
+      applyTheme(v);
+      renderSettings();
+      return;
+    }
+
+    const fc = t.closest('[data-focus]');
+    if (fc) { insFocus = fc.dataset.focus; renderInsights(); return; }
 
     const ins = t.closest('[data-ins]');
     if (ins) { insTab = ins.dataset.ins; renderInsights(); return; }
@@ -3218,7 +3379,17 @@
     }
     else if (t.id === 'f-note') draft.note = t.value;
     else if (t.id === 'f-amount') draft.amount = t.value;
-    else if (t.id === 'q') { searchQ = t.value; renderSearch(); }
+    else if (t.id === 'q') {
+      searchQ = t.value;
+      renderSearch();
+      const hits = searchMatches();
+      if (hits && hits.length) {
+        const inMonth = hits.some(e => { const d = parseDay(dayOf(e.ts)); return d.getFullYear() === calMonth.getFullYear() && d.getMonth() === calMonth.getMonth(); });
+        if (!inMonth) { const last = parseDay(dayOf(Math.max(...hits.map(e => e.ts)))); calMonth = new Date(last.getFullYear(), last.getMonth(), 1); }
+      }
+      const cal = $('.card.cal');
+      if (cal) cal.outerHTML = renderCalendar();
+    }
     else if (t.id === 'help-q') filterHelp(t.value);
     else if (t.id === 'f-duration') {
       draft.duration = t.value;

@@ -98,14 +98,14 @@
         if (!s.id.includes(':') || s.id.startsWith('tag:')) {
           return x.level === 'none'
             ? (hasBad(s, 'load') ? 'Po jednom jedle sa to neprejaví. Vadí až väčšie množstvo za deň.' : `Po jednotlivých jedlách súvis nevidno (${w}).`)
-            : `Po ${w} takých jedál prišli do ${(lastR && lastR.opts.toH) || 6} h ťažkosti. Po ostatných jedlách v ${o} prípadov.`;
+            : `Po ${w} takých jedál ${OUT.after}. Po ostatných jedlách v ${o} prípadov.`;
         }
-        return `Po ${w} takých jedál prišli ťažkosti. Po ostatných v ${o} prípadov.`;
-      case 'load': return x.level === 'none' ? `Ani pri 2 a viac porciách za deň sa ťažkosti nezvyšujú (${w} dní).`
-        : `V dni s 2 a viac porciami boli ťažkosti ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
-      case 'late': return `Na druhý deň (12–48 h) prišli ťažkosti po ${w} takých jedál. Inak v ${o} prípadov.`;
-      case 'stack': return `Keď sa to za 12 h zjedlo 2× a viac, prišli ťažkosti po ${w} jedál. Pri 1× v ${o} prípadov.`;
-      case 'day': return `V takéto dni boli ťažkosti ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
+        return `Po ${w} takých jedál ${OUT.afterShort}. Po ostatných v ${o} prípadov.`;
+      case 'load': return x.level === 'none' ? `Ani pri 2 a viac porciách za deň nie je rozdiel (${w} dní).`
+        : `V dni s 2 a viac porciami ${OUT.dayHad} ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
+      case 'late': return `Na druhý deň (12–48 h) ${OUT.afterShort} po ${w} takých jedál. Inak v ${o} prípadov.`;
+      case 'stack': return `Keď sa to za 12 h zjedlo 2× a viac, ${OUT.afterShort} po ${w} jedál. Pri 1× v ${o} prípadov.`;
+      case 'day': return `V takéto dni ${OUT.dayHad} ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
       case 'worst': return `Bolo v ${x.n} z ${x.of} najhorších dní a v žiadnom z najlepších.`;
       case 'best': return `Bolo v ${x.n} z ${x.of} najlepších dní a v žiadnom z najhorších.`;
       case 'both': return doseOnly(s) ? 'Bolo aj v dobrých dňoch. Rozhoduje teda skôr množstvo než samotná surovina.' : 'Bolo v najlepších aj najhorších dňoch.';
@@ -145,14 +145,15 @@
   function openSuspect(id) {
     const s = lastSus.get(id);
     if (!s) return;
-    const ev = Analysis.evidence(entries, days, id, Date.now());
+    const fdx = FD || focusData('all');
+    const ev = Analysis.evidence(fdx.E, fdx.D, id, Date.now());
     const testable = s.id.startsWith('tag:') || !s.id.includes(':');
     const order = ['meal', 'load', 'late', 'stack', 'day', 'worst', 'best', 'both'];
     const sigs = s.sig.slice().sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
     let h = `<div class="sheet-head"><h2>${esc(s.name)}</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>
       <p class="verdict v-${s.verdict}">${VERDICT_TXT[s.verdict]}${s.top ? ' · ' + susRatio(s) : ''}</p>`;
     h += grp('Čo ukazujú údaje', '<ul class="why">' + sigs.map(g => `<li class="${SIG_W[g.kind] && g.x.level !== 'none' ? 'bad' : g.kind === 'best' ? 'good' : ''}">${sigSentence(g, s)}</li>`).join('') + '</ul>');
-    if (ev && ev.mine.n >= 3) {
+    if (ev && ev.mine.n >= 3 && OUT.delay) {
       const lab = ['do 1 h', '1–2 h', '2–4 h', '4–8 h', '8–24 h'];
       const rows = ev.buckets.map((_, i) => `<span>${lab[i]}</span>
         <div class="bar2"><i class="m" style="width:${Math.round(ev.mine.b[i] * 100)}%"></i><i class="o" style="width:${Math.round(ev.rest.b[i] * 100)}%"></i></div>
@@ -168,7 +169,7 @@
         const win = (lastR && lastR.opts.toH) || 6;
         const after = d => 'o ' + (d < 1 ? Math.max(1, Math.round(d * 60)) + ' min' : Math.round(d) + ' h');
         const out = !x.ripe && x.delay == null ? ['wait', 'čaká sa'] : x.delay != null && x.delay < 24
-          ? [x.delay <= win ? 'hit' : 'wait', 'ťažkosti ' + after(x.delay) + (x.sev ? ' · ' + x.sev + '/10' : '')]
+          ? [x.delay <= win ? 'hit' : 'wait', OUT.ev + ' ' + after(x.delay) + (x.sev && OUT.delay ? ' · ' + x.sev + '/10' : '')]
           : x.known ? ['ok', 'bez ťažkostí'] : ['wait', 'deň nezapísaný'];
         return `<button type="button" class="ev" data-goday="${dayOf(x.ts)}"><span class="ev-t">${esc(x.desc)}<small>${fmtDayHead(dayOf(x.ts))} · ${fmtTime(x.ts)}</small></span>
           <span class="ev-o ${out[0]}">${out[1]}</span></button>`;
@@ -304,6 +305,8 @@
   // Spojený verdikt s aktuálnym nastavením výpočtu (pre Dnes a prehľad pre lekára)
   function computeSuspects() {
     const fromH = meta.fromH != null ? meta.fromH : 0, toH = meta.toH != null ? meta.toH : 6, minN = meta.minN || 5;
+    FD = focusData('all');
+    OUT = FD.out;
     const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
     if (r.totalN < 10 || r.symptomCount < 3) return [];
     lastR = r;

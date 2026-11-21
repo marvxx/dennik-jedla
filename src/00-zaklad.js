@@ -1,5 +1,19 @@
 
-  const APP_VERSION = '3.5';
+  const APP_VERSION = '3.6';
+
+  // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
+  const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
+  function applyTheme(t) {
+    const root = document.documentElement;
+    if (t === 'light' || t === 'dark') root.dataset.theme = t; else delete root.dataset.theme;
+    // farba stavového riadku
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+      const dark = /dark/.test(m.media || '');
+      m.content = t === 'light' || t === 'dark' ? THEME_BG[t] : THEME_BG[dark ? 'dark' : 'light'];
+    });
+  }
+  const savedTheme = () => { try { return localStorage.getItem('dennik-theme') || 'auto'; } catch (_) { return 'auto'; } };
+  applyTheme(savedTheme());
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -61,8 +75,8 @@
   const WATER = [['malo', 'málo'], ['ok', 'dosť']];
   const DAY_FIELDS = [
     ['sleep', 'Spánok', SLEEP, 'str'], ['period', 'Menštruácia', PERIOD, 'bool'],
-    ['activity', 'Pohyb', ACTIVITY, 'str'], ['water', 'Pitie', WATER, 'str'],
-  ];
+    ['activity', 'Pohyb', ACTIVITY, 'str'],
+  ];   // pitie sa počíta pohármi vody (karta Voda a káva); staré „málo/dosť“ ostáva v údajoch
   const CTX_LABELS = {
     'rushed': 'jedlo v zhone', 'portion:velka': 'veľká porcia',
     'stress:high': 'stres 4–5 pri jedle', 'mood:low': 'zlá nálada pri jedle',

@@ -574,7 +574,54 @@
     return { buckets: DELAY_BUCKETS, mine: M, rest: R, peak, list };
   }
 
-  const api = { analyze, bestWorst, evidence, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
+  // Lieky a doplnky: pomáhajú? Pre každý liek užitý aspoň 3×:
+  //  pred/po: dni s ťažkosťami 14 dní pred prvým užitím vs. odkedy sa užíva (ak sa užíva pravidelne),
+  //  s/bez: dni s liekom vs. bez neho (od prvého užitia),
+  //  pri ťažkostiach: užitý do 3 h po ťažkostiach – prišli potom do 4 h ďalšie?
+  function medEffects(entries, days, now) {
+    now = now || Date.now();
+    days = days || {};
+    const today = localDate(now);
+    const sym = entries.filter(e => e.type === 'symptom').sort((a, b) => a.ts - b.ts);
+    const symDays = new Set(sym.map(e => localDate(e.ts)));
+    const usesNoSym = Object.values(days).some(v => v && v.noSymptoms);
+    const logged = new Set(entries.map(e => localDate(e.ts)));
+    const known = d => d < today && (symDays.has(d) || (usesNoSym ? !!(days[d] && days[d].noSymptoms) : logged.has(d)));
+    const allDays = [...new Set(entries.map(e => localDate(e.ts)).concat(Object.keys(days)))].sort();
+    const shift = (d, n) => { const [y, m, dd] = d.split('-').map(Number); const x = new Date(y, m - 1, dd + n, 12); return localDate(x.getTime() + 4 * HOUR); };
+    const groups = new Map();
+    entries.filter(e => e.type === 'med' && e.desc).forEach(e => {
+      const k = norm(e.desc.trim().toLowerCase());
+      const g = groups.get(k) || { name: e.desc.trim(), list: [] };
+      g.list.push(e);
+      groups.set(k, g);
+    });
+    const cnt = list => ({ n: list.length, hit: list.filter(d => symDays.has(d)).length });
+    const out = [];
+    for (const g of groups.values()) {
+      if (g.list.length < 3) continue;
+      const useDays = new Set(g.list.map(e => localDate(e.ts)));
+      const first = [...useDays].sort()[0];
+      const before = [], since = [];
+      for (let i = 1; i <= 14; i++) { const d = shift(first, -i); if (known(d)) before.push(d); }
+      allDays.filter(d => d >= first && known(d)).forEach(d => since.push(d));
+      const withD = since.filter(d => useDays.has(d)), withoutD = since.filter(d => !useDays.has(d));
+      // užité pri ťažkostiach
+      let acute = 0, again = 0;
+      for (const e of g.list) {
+        const pre = sym.some(s => s.ts <= e.ts && s.ts >= e.ts - 3 * HOUR);
+        if (!pre) continue;
+        acute++;
+        if (sym.some(s => s.ts > e.ts + 15 * 60e3 && s.ts <= e.ts + 4 * HOUR)) again++;
+      }
+      const regular = useDays.size >= 5 && withD.length >= since.length * 0.6;
+      out.push({ name: g.name, uses: g.list.length, days: useDays.size, first, regular,
+        before: cnt(before), since: cnt(since), with: cnt(withD), without: cnt(withoutD), acute, again });
+    }
+    return out.sort((a, b) => b.uses - a.uses);
+  }
+
+  const api = { analyze, bestWorst, evidence, medEffects, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);

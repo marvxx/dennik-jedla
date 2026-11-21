@@ -133,3 +133,32 @@ test('málo pitia: aj podľa počtu pohárov vody', () => {
   const w = r.days.find(x => x.key === 'water:malo');
   assert.ok(w && w.level !== 'none', 'málo pitia by malo vyjsť podozrivo');
 });
+
+test('lieky: probiotiká, odkedy sa užívajú, ťažkostí ubudlo', () => {
+  const e = [], days = {};
+  for (let i = 1; i <= 40; i++) {
+    const ts = new Date(2026, 9, i, 12).getTime();
+    const ds = A.localDate(ts);
+    e.push(food('f' + i, ts, 'ryža'));
+    const onMed = i > 20;
+    if (onMed) e.push({ id: 'm' + i, type: 'med', ts: ts + 9 * H, desc: 'probiotiká' });
+    const bad = onMed ? i % 5 === 0 : i % 5 !== 0;   // pred: 4 z 5 dní ťažkosti, potom 1 z 5
+    if (bad) e.push(sym('s' + i, ts + 2 * H)); else days[ds] = { date: ds, noSymptoms: true };
+  }
+  const m = A.medEffects(e, days, new Date(2026, 10, 21).getTime()).find(x => x.name === 'probiotiká');
+  assert.ok(m && m.regular, 'probiotiká by mali byť pravidelné');
+  assert.ok(m.since.hit / m.since.n < m.before.hit / m.before.n - 0.3, 'odkedy sa užívajú, má byť ťažkostí menej');
+});
+
+test('lieky: užité pri ťažkostiach sa počíta zvlášť', () => {
+  const t0 = new Date(2026, 9, 5, 15).getTime();
+  const e = [];
+  for (let i = 0; i < 4; i++) {
+    const t = t0 + i * DAY;
+    e.push(sym('s' + i, t), { id: 'n' + i, type: 'med', ts: t + 30 * 60e3, desc: 'No-Spa' });
+    if (i === 0) e.push(sym('x', t + 2 * H));
+  }
+  const m = A.medEffects(e, {}, NOW).find(x => x.name === 'No-Spa');
+  assert.equal(m.acute, 4);
+  assert.equal(m.again, 1);
+});
