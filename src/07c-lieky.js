@@ -15,7 +15,7 @@
       } else if (m.with.n >= 3 && m.without.n >= 3) {
         lines.push(`V dni s ním ťažkosti ${m.with.hit} z ${m.with.n} (${pct(p(m.with))}), bez neho ${m.without.hit} z ${m.without.n} (${pct(p(m.without))}).`);
       }
-      if (m.acute >= 2) {
+      if (!m.regular && m.acute >= 2) {
         lines.push(`Pri ťažkostiach užité ${m.acute}×. Ďalšie ťažkosti do 4 h potom prišli ${m.again}×.`);
       }
       if (!lines.length) lines.push(`Užité ${m.uses}× v ${m.days} dňoch. Na porovnanie treba viac údajov.`);

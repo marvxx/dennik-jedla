@@ -162,3 +162,12 @@ test('lieky: užité pri ťažkostiach sa počíta zvlášť', () => {
   assert.equal(m.acute, 4);
   assert.equal(m.again, 1);
 });
+
+test('fráza za predložkou je v základnom tvare', () => {
+  const e = [];
+  for (let i = 0; i < 6; i++) e.push(food('c' + i, NOW - (30 - i) * DAY, i % 2 ? 'chlieb s maslom a šunkou' : 'rožok s maslom a šunkou'));
+  e.push(food('x', NOW - 20 * DAY, 'chlieb'), food('y', NOW - 19 * DAY, 'rožok'));
+  const r = A.analyze(e, {}, { now: NOW, minN: 50 });
+  const labels = r.foodsPending.map(x => x.label);
+  assert.ok(labels.includes('maslo a šunka'), labels.join(', '));
+});

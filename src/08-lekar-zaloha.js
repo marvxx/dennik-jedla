@@ -16,7 +16,7 @@
     const fd = ts => { const d = new Date(ts); return d.getDate() + '. ' + (d.getMonth() + 1) + '. ' + d.getFullYear(); };
     const part = ts => { const h = new Date(ts).getHours(); return h < 5 ? 'v noci' : h < 11 ? 'ráno' : h < 17 ? 'cez deň' : h < 23 ? 'večer' : 'v noci'; };
     const sevs = sym.map(e => e.severity).filter(x => x != null);
-    const r = Analysis.analyze(entries, days, { fromH: 0, toH: 6, minN: meta.minN || 5, riskTags: riskTags() });
+    const r = anz('all', entries, days, { fromH: 0, toH: 6, minN: meta.minN || 5, riskTags: riskTags() });
     const line = x => `${resName(x)}: ťažkosti ${x.withHit} z ${x.withN} (${pct(x.rateWith)}), inak ${pct(x.rateWithout)}`;
     const sus = r.foods.concat(r.ctx).filter(x => x.level !== 'none').sort((a, b) => b.ratio - a.ratio).slice(0, 8);
     const dayF = r.days.concat(r.loads || []).filter(x => x.level !== 'none');
@@ -39,6 +39,30 @@
     const tol = toleratedList(r);
     if (tol.length) S.push(['Čo znáša dobre', [tol.map(x => resName(x) + ' (' + x.withHit + ' z ' + x.withN + ')').join(', ')]]);
     if (dayF.length) S.push(['Okolnosti dňa', dayF.map(x => `${resName(x)}: ťažkosti ${x.withHit} z ${x.withN} dní, inak ${x.outHit} z ${x.outN}`)]);
+    // vývoj po týždňoch
+    const weeks = weeklyTrend(12).filter(w => w.logged >= 3);
+    const tv = trendVerdict(weeklyTrend(12));
+    if (weeks.length >= 2) S.push(['Vývoj po týždňoch (dni s ťažkosťami zo 7)', [weeks.map(w => `${shortDate(w.ws)}: ${w.sym}`).join(', ')].concat(tv ? [tv.text + (tv.word ? ' ' + tv.word : '')] : [])]);
+    // podozrenia podľa druhu ťažkostí a pre stolicu
+    const byFocus = focusSuspects();
+    if (byFocus.length) S.push(['Podozrenia podľa druhu ťažkostí a stolice', byFocus]);
+    // lieky a doplnky
+    const meds = Analysis.medEffects(entries, days, Date.now()).map(m => {
+      const p = x => x.n ? Math.round(x.hit / x.n * 100) + ' %' : '–';
+      const parts = [];
+      if (m.regular && m.before.n >= 5 && m.since.n >= 5) parts.push(`ťažkosti pred začatím ${p(m.before)} dní, odvtedy ${p(m.since)}`);
+      else if (m.with.n >= 3 && m.without.n >= 3) parts.push(`dni s ním ťažkosti ${p(m.with)}, bez neho ${p(m.without)}`);
+      if (!m.regular && m.acute >= 2) parts.push(`pri ťažkostiach ${m.acute}×, ďalšie ťažkosti do 4 h ${m.again}×`);
+      return `${m.name} (${m.uses}×)${parts.length ? ': ' + parts.join('; ') : ''}`;
+    });
+    if (meds.length) S.push(['Lieky a doplnky – súvis s ťažkosťami', meds]);
+    // testy a zavádzanie
+    const tests = eventLog().map(h => `${fd(h.ts)}: ${h.txt}`);
+    const ti = testInfo();
+    if (ti) tests.push(`Prebieha test bez: ${ti.t.what}, deň ${ti.elapsed} z ${ti.t.days}; dni s ťažkosťami ${ti.during} z ${ti.elapsed} (predtým ${ti.before} z ${ti.elapsed})`);
+    const ri = reintroInfo();
+    if (ri) tests.push(`Prebieha zavádzanie: ${ri.r.what} – ${reintroVerdict(ri)[1]}`);
+    if (tests.length) S.push(['Testy a zavádzanie', tests]);
     if (findings().length) S.push(['Vlastné zistenia', findings().map(f => `${f.text} – ${FND_TXT[f.status]}${f.note ? ' (' + f.note + ')' : ''}`)]);
     S.push(['Lieky a iné', [top(E.filter(e => e.type === 'med').map(e => e.desc), 8)]]);
     return S;
@@ -50,6 +74,28 @@
   }
 
   // Grafy do prehľadu: sila ťažkostí po dňoch (30 dní) a stolica podľa Bristolskej škály
+  // najsilnejšie podozrenie pre každý druh ťažkostí a pre stolicu (zvyšok aplikácie sa nezmení)
+  function focusSuspects() {
+    const keep = { FD, OUT, lastSus, lastR };
+    const out = [];
+    try {
+      for (const [k, label] of focusOptions()) {
+        if (k === 'all') continue;
+        const fdx = focusData(k);
+        OUT = fdx.out;
+        const r = anz(fdx.f, fdx.E, fdx.D, fdx.opts);
+        if (r.totalN < 10 || r.symptomCount < 3) continue;
+        lastR = r;
+        const r2 = fdx.out.late && fdx.opts.toH < 12 ? anz(fdx.f, fdx.E, fdx.D, Object.assign({}, fdx.opts, { fromH: 12, toH: 48 })) : null;
+        const top = buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, bwz(fdx.f, fdx.E, fdx.D)).filter(s => s.score >= 1).slice(0, 2);
+        out.push(`${label} (${r.symptomCount}×): ` + (top.length ? top.map(s => `${s.name} – ${VERDICT_TXT[s.verdict].toLowerCase()}${s.top ? ', ' + susRatio(s) : ''}`).join('; ') : 'nič výrazné'));
+      }
+    } finally {
+      FD = keep.FD; OUT = keep.OUT; lastSus = keep.lastSus; lastR = keep.lastR;
+    }
+    return out;
+  }
+
   function reportCharts() {
     const today = parseDay(todayStr()).getTime();
     const ix = dayIndex();
@@ -88,7 +134,7 @@
     const S = buildReport();
     if (!S) { toast('Zatiaľ žiadne záznamy'); return; }
     $('#report-sheet').innerHTML = `<div class="sheet-head noprint"><h2>Prehľad pre lekára</h2><button type="button" class="x" data-act="report-close" aria-label="Zavrieť">✕</button></div>
-      <div class="report"><h1>Denník jedla a trávenia – prehľad</h1>` + reportCharts() +
+      <div class="report"><h1>Denník jedla a trávenia – prehľad</h1>` + reportCharts() + trendHtml(true) +
       S.map(([h, l]) => `<h3>${esc(h)}</h3><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`).join('') +
       `<p class="tiny">Údaje zapísala pacientka sama. Súvislosti sú len časová zhoda, nie diagnóza.</p></div>
       <div class="savebar noprint"><button type="button" class="btn" data-act="report-share">Zdieľať ako text</button>

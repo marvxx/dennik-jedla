@@ -307,10 +307,10 @@
     const fromH = meta.fromH != null ? meta.fromH : 0, toH = meta.toH != null ? meta.toH : 6, minN = meta.minN || 5;
     FD = focusData('all');
     OUT = FD.out;
-    const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
+    const r = anz('all', entries, days, { fromH, toH, minN, riskTags: riskTags() });
     if (r.totalN < 10 || r.symptomCount < 3) return [];
     lastR = r;
-    const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
-    return buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null);
+    const r2 = toH < 12 ? anz('all', entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
+    return buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, bwz('all', entries, days));
   }
 

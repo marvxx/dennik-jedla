@@ -73,7 +73,17 @@
   const PREPS = new Set(['s', 'so', 'z', 'zo', 'na', 'v', 'vo', 'bez', 'do', 'k', 'ku', 'po', 'pre', 'pri', 'od', 'za']);
 
   // Slová popisu v poradí; k = kľúč plnovýznamového slova, prep = predložka pred ním
+  const WORDS_MEMO = new Map();
   function words(desc) {
+    const key = String(desc || '');
+    const hit = WORDS_MEMO.get(key);
+    if (hit) return hit;
+    const out = wordsRaw(key);
+    if (WORDS_MEMO.size > 5000) WORDS_MEMO.clear();
+    WORDS_MEMO.set(key, out);
+    return out;
+  }
+  function wordsRaw(desc) {
     const out = [];
     let prev = '';
     for (const w of String(desc || '').toLowerCase().split(/[^\p{L}]+/u)) {
@@ -107,7 +117,9 @@
     ws.forEach((x, i) => { if (x.k && keys.has(x.k)) idx.push(i); });
     if (idx.length < 2 || idx.length !== keys.size) return null;
     for (let i = idx[0]; i <= idx[idx.length - 1]; i++) if (!idx.includes(i) && ws[i].k) return null;
-    return ws.slice(idx[0], idx[idx.length - 1] + 1).map(x => x.w).join(' ');
+    // fráza za predložkou („s maslom a šunkou“) je v inom páde: ukáže sa v základnom tvare („maslo a šunka“)
+    if (ws[idx[0]].prep && idx.every(i => BASE[ws[i].k])) return idx.map(i => BASE[ws[i].k]).join(' a ');
+    return (ws[idx[0]].prep ? ws[idx[0]].prep + ' ' : '') + ws.slice(idx[0], idx[idx.length - 1] + 1).map(x => x.w).join(' ');
   }
 
   // Slovník na automatické rozpoznanie skupín potravín z popisu.
@@ -143,6 +155,7 @@
 
   // Vlastné intolerancie používateľa: [{id: 'c_…', words: ['paradajk']}]
   function setCustomTags(list) {
+    resetTagCache();
     for (const k of Object.keys(TAG_WORDS)) if (k.startsWith('c_')) delete TAG_WORDS[k];
     for (const c of list || []) if (c && c.id && c.words && c.words.length) TAG_WORDS[c.id] = c.words.slice();
   }
@@ -150,6 +163,7 @@
   // Keď popis obsahuje názov jedla, počítajú sa aj jeho suroviny.
   let RECIPES = [];
   function setRecipes(list) {
+    resetTagCache();
     RECIPES = (list || []).filter(r => r && r.name && r.ingredients)
       .map(r => ({ n: norm(String(r.name).toLowerCase()).trim(), ing: String(r.ingredients) }));
   }
@@ -174,21 +188,36 @@
     return out;
   }
 
+  // Kvôli rýchlosti: kľúče skupín sa pripravia raz a výsledok pre rovnaký text sa pamätá
+  // (pri rokoch záznamov sa ten istý popis vyhodnocuje tisíckrát).
+  let TAG_KEYS = null;
+  const TAG_MEMO = new Map();
+  function resetTagCache() { TAG_KEYS = null; TAG_MEMO.clear(); }
   function detectTags(desc) {
+    const key = String(desc || '');
+    const hit = TAG_MEMO.get(key);
+    if (hit) return hit.slice();
+    if (!TAG_KEYS) {
+      TAG_KEYS = Object.keys(TAG_WORDS).map(tag => [tag, TAG_WORDS[tag].map(k0 => {
+        const exact = k0[0] === '=';
+        return [exact, norm(exact ? k0.slice(1) : k0)];
+      })]);
+    }
     const found = new Set();
-    for (const w of String(desc || '').toLowerCase().split(/[^\p{L}]+/u)) {
+    for (const w of key.toLowerCase().split(/[^\p{L}]+/u)) {
       if (w.length < 2) continue;
       const n = norm(w);
-      for (const tag in TAG_WORDS) {
+      for (const [tag, keys] of TAG_KEYS) {
         if (found.has(tag)) continue;
-        for (const k0 of TAG_WORDS[tag]) {
-          const exact = k0[0] === '=';
-          const k = norm(exact ? k0.slice(1) : k0);
+        for (const [exact, k] of keys) {
           if (exact ? n === k : n.startsWith(k)) { found.add(tag); break; }
         }
       }
     }
-    return [...found];
+    const out = [...found];
+    if (TAG_MEMO.size > 5000) TAG_MEMO.clear();
+    TAG_MEMO.set(key, out);
+    return out.slice();
   }
 
   /** Skupiny jedla = ručne označené + rozpoznané z popisu – ručne vypnuté */
@@ -274,7 +303,11 @@
     }
 
     const foodTimes = entries.filter(e => e.type === 'food').map(e => e.ts).sort((a, b) => a - b);
-    const prevFood = ts => { let p = null; for (const t of foodTimes) { if (t < ts) p = t; else break; } return p; };
+    const prevFood = ts => {
+      let lo = 0, hi = foodTimes.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (foodTimes[m] < ts) lo = m + 1; else hi = m; }
+      return lo ? foodTimes[lo - 1] : null;
+    };
     const info = [];   // pomocné údaje o každom jedle
     for (const m of meals) {
       const hit = followed(m.ts);
@@ -386,12 +419,15 @@
     const allTags = new Set();
     info.forEach(x => x.tags.forEach(t => allTags.add(t)));
     const allFood = entries.filter(e => e.type === 'food');
+    const foodTagList = allFood.map(e => ({ ts: e.ts, tags: mealTags(e) }));
     for (const t of allTags) {
-      const tagTimes = allFood.filter(e => mealTags(e).includes(t)).map(e => e.ts);
+      const tagTimes = foodTagList.filter(x => x.tags.includes(t)).map(x => x.ts).sort((a, b) => a - b);
+      const firstGE = v => { let lo = 0, hi = tagTimes.length; while (lo < hi) { const m = (lo + hi) >> 1; if (tagTimes[m] < v) lo = m + 1; else hi = m; } return lo; };
       const list = info.filter(x => x.tags.includes(t));
       let sN = 0, sHit = 0;
       for (const x of list) {
-        const load = tagTimes.filter(ts => ts <= x.m.ts && ts > x.m.ts - 12 * HOUR).length;
+        // jedlá tej istej skupiny v okne (ts − 12 h, ts]
+        const load = firstGE(x.m.ts + 1) - firstGE(x.m.ts - 12 * HOUR + 1);
         if (load >= 2) { sN++; if (x.hit) sHit++; }
       }
       const tHit = list.filter(x => x.hit).length;

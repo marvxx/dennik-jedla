@@ -1,5 +1,5 @@
 
-  const APP_VERSION = '3.6';
+  const APP_VERSION = '3.7';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -248,6 +248,23 @@
     spring(st, open ? 0 : H, cfg || (open ? SPRING_OPEN : SPRING_CLOSE), frame, done);
   }
 
+  // ---------- Pamäť výpočtov ----------
+  // Vyhodnotenie pri rokoch záznamov trvá desiatky ms; rovnaký výpočet sa preto pamätá,
+  // kým sa údaje nezmenia (dataVer) a najviac 10 minút (časové okná jedál sa posúvajú).
+  let dataVer = 0;
+  const MEMO = new Map();
+  function memo(key, fn) {
+    const k = dataVer + '|' + Math.floor(Date.now() / 600000) + '|' + key;
+    if (MEMO.has(k)) return MEMO.get(k);
+    if (MEMO.size > 30) MEMO.clear();
+    const v = fn();
+    MEMO.set(k, v);
+    return v;
+  }
+  // scope = čo je v údajoch (všetko, alebo zameranie ako „kind:nadúvanie“)
+  const anz = (scope, E, D, o) => memo('a|' + scope + '|' + JSON.stringify(o), () => Analysis.analyze(E, D, o));
+  const bwz = (scope, E, D) => memo('b|' + scope, () => Analysis.bestWorst ? Analysis.bestWorst(E, D) : null);
+
   // ---------- Databáza ----------
   const DB = (() => {
     let dbp;
@@ -278,12 +295,14 @@
         t.onabort = () => rej(t.error);
       });
     }
+    // každý zápis zvýši verziu údajov, aby sa zapamätané výpočty prepočítali
+    const w = fn => { dataVer++; return fn(); };
     return {
       all: store => tx(store, 'readonly', s => s.getAll()),
-      put: (store, v) => tx(store, 'readwrite', s => s.put(v)),
-      putMany: (store, arr) => tx(store, 'readwrite', s => { arr.forEach(v => s.put(v)); }),
-      del: (store, k) => tx(store, 'readwrite', s => s.delete(k)),
-      clear: store => tx(store, 'readwrite', s => s.clear()),
+      put: (store, v) => w(() => tx(store, 'readwrite', s => s.put(v))),
+      putMany: (store, arr) => w(() => tx(store, 'readwrite', s => { arr.forEach(v => s.put(v)); })),
+      del: (store, k) => w(() => tx(store, 'readwrite', s => s.delete(k))),
+      clear: store => w(() => tx(store, 'readwrite', s => s.clear())),
     };
   })();
 

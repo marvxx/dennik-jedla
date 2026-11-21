@@ -129,7 +129,7 @@
 
   // ---------- Najlepšie a najhoršie dni ----------
   function bestWorstHtml() {
-    const bw = Analysis.bestWorst ? Analysis.bestWorst(FD ? FD.E : entries, FD ? FD.D : days) : null;
+    const bw = FD ? bwz(FD.f, FD.E, FD.D) : bwz('all', entries, days);
     if (!bw) return '';
     const lab2 = r => r.key.startsWith('tag:') ? tagLabel(r.label) : r.label;
     const chips = (list, cls) => list.length ? '<div class="pending">' + list.map(r => `<span class="${cls}">${esc(lab2(r))}</span>`).join('') + '</div>' : '<p class="tiny" style="margin:0">nič výrazné</p>';
@@ -166,7 +166,7 @@
     const fd = focusData(insFocus);
     FD = fd;
     OUT = fd.out;
-    const r = Analysis.analyze(fd.E, fd.D, fd.opts);
+    const r = anz(fd.f, fd.E, fd.D, fd.opts);
 
     let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom je horšie a po čom dobre.</p></div><button type="button" class="help-q" data-act="help" data-sec="insights" aria-label="Pomocník">?</button></header>
       <div class="segbar">${INS_TABS.map(([k, l]) => `<button type="button" class="${k === insTab ? 'on' : ''}" data-ins="${k}">${l}</button>`).join('')}</div>` + fb;
@@ -201,8 +201,8 @@
     }
 
     lastR = r;
-    const r2 = OUT.late && toH < 12 ? Analysis.analyze(fd.E, fd.D, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
-    const bw = Analysis.bestWorst ? Analysis.bestWorst(fd.E, fd.D) : null;
+    const r2 = OUT.late && toH < 12 ? anz(fd.f, fd.E, fd.D, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
+    const bw = bwz(fd.f, fd.E, fd.D);
     const sus = buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, bw);
     // čo je podozrivé z iného pohľadu (napr. dávka za deň), nepatrí medzi dobre znášané
     const tol = toleratedList(r).filter(x => !sus.some(s => s.id === x.key));
@@ -267,7 +267,7 @@
       if (goodCtx.length) {
         h += `<div class="card"><h2>Kedy rizikové jedlo vadí menej</h2>` + goodCtx.map(x => resItem(Object.assign({}, x, { level: 'good' }), 'risk')).join('') + '</div>';
       }
-      const bw = Analysis.bestWorst ? Analysis.bestWorst(FD ? FD.E : entries, FD ? FD.D : days) : null;
+      const bw = FD ? bwz(FD.f, FD.E, FD.D) : bwz('all', entries, days);
       if (bw && bw.onlyBest.length) {
         h += `<div class="card"><h2>Jedlo sa len v najlepších dňoch</h2><p class="tiny" style="margin:0 0 8px">Najlepšie dni: ${bw.best.map(fmtDayHead).join(', ')}.</p>
           <div class="pending">${bw.onlyBest.map(x => `<span class="good">${esc(x.key.startsWith('tag:') ? tagLabel(x.label) : x.label)}</span>`).join('')}</div></div>`;

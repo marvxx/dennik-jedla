@@ -50,7 +50,21 @@
       .map(x => ({ ...x, wi: weeks.findIndex(w => w.ws === weekStart(dayOf(x.ts))) })).filter(x => x.wi >= 0);
   }
 
-  function trendHtml() {
+  // porovnanie posledných 4 ukončených týždňov s predošlými 4 (len týždne s údajmi)
+  function trendVerdict(weeks) {
+    const done = weeks.filter(w => !w.current && w.logged >= 3);
+    if (done.length < 4) return null;
+    const rate = list => list.reduce((a, w) => a + w.sym / w.n * 7, 0) / list.length;
+    const recent = done.slice(-4), prev = done.slice(-8, -4);
+    const a = rate(recent), f = x => x.toFixed(1).replace('.', ',');
+    if (prev.length < 2) return { text: `Posledné týždne ťažkosti priemerne ${f(a)} dňa týždenne.`, word: '', tone: '' };
+    const b = rate(prev), diff = a - b;
+    const tone = diff <= -0.5 ? 'good' : diff >= 0.5 ? 'bad' : '';
+    return { text: `Posledné 4 týždne ťažkosti priemerne ${f(a)} dňa týždenne, predtým ${f(b)}.`, word: tone === 'good' ? 'Lepšie.' : tone === 'bad' ? 'Horšie.' : 'Zhruba rovnako.', tone };
+  }
+
+  // forReport: bez karty, do prehľadu pre lekára
+  function trendHtml(forReport) {
     const weeks = weeklyTrend(12);
     const usable = weeks.filter(w => w.logged >= 3);
     if (usable.length < 2) return '';
@@ -81,20 +95,13 @@
       svg += `<circle cx="${cx.toFixed(1)}" cy="${base + 21}" r="5.5" fill="var(--accent)"/><text x="${cx.toFixed(1)}" y="${base + 23.6}" text-anchor="middle" class="m">${num}</text>`;
     });
 
-    // porovnanie: posledné 4 ukončené týždne s predošlými 4 (len týždne s údajmi)
-    const done = weeks.filter(w => !w.current && w.logged >= 3);
-    const rate = list => list.reduce((a, w) => a + w.sym / w.n * 7, 0) / list.length;
-    let verdict = '';
-    if (done.length >= 4) {
-      const recent = done.slice(-4), prev = done.slice(-8, -4);
-      const a = rate(recent);
-      if (prev.length >= 2) {
-        const b = rate(prev), diff = a - b;
-        const word = diff <= -0.5 ? '<b class="good">Lepšie.</b>' : diff >= 0.5 ? '<b class="bad">Horšie.</b>' : 'Zhruba rovnako.';
-        verdict = `Posledné 4 týždne ťažkosti priemerne ${a.toFixed(1).replace('.', ',')} dňa týždenne, predtým ${b.toFixed(1).replace('.', ',')}. ${word}`;
-      } else verdict = `Posledné týždne ťažkosti priemerne ${a.toFixed(1).replace('.', ',')} dňa týždenne.`;
-    }
+    const tv = trendVerdict(weeks);
+    const verdict = tv ? tv.text + (tv.word ? ' ' + (tv.tone ? `<b class="${tv.tone}">${tv.word}</b>` : tv.word) : '') : '';
     const evList = ev.length ? '<ol class="tr-ev">' + ev.map((x, i) => `<li><b>${i + 1}</b> ${esc(shortDate(dayOf(x.ts)))} ${esc(x.txt)}</li>`).join('') + '</ol>' : '';
+    if (forReport) {
+      return `<h3>Vývoj po týždňoch</h3><div class="trend"><svg class="rchart tr" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Počet dní s ťažkosťami v jednotlivých týždňoch">${svg}</svg>
+        <p class="tiny" style="margin:2px 0 0">Stĺpec = počet dní s ťažkosťami v týždni (zo 7), farba = priemerná sila.</p>${evList}</div>`;
+    }
     return `<div class="card trend"><h2>Je to lepšie?</h2>
       <svg class="rchart tr" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Počet dní s ťažkosťami v jednotlivých týždňoch">${svg}</svg>
       <p class="tiny" style="margin:2px 0 0">Stĺpec = počet dní s ťažkosťami v týždni (zo 7), farba = priemerná sila. Bledý stĺpec = málo zápisov.</p>
