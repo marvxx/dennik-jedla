@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.3';
+  const APP_VERSION = '3.4';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -374,6 +374,7 @@
       <div class="sheet tall" id="scan-sheet" role="dialog" aria-label="Skenovať výrobok"></div>
       <div class="sheet" id="mini-sheet" role="dialog"></div>
       <div class="sheet tall" id="report-sheet" role="dialog" aria-label="Prehľad pre lekára"></div>
+      <div class="sheet tall" id="help-sheet" role="dialog" aria-label="Pomocník"></div>
       <div id="toast" role="status" aria-live="polite"></div>
       <input type="file" id="import-file" accept=".json,application/json" hidden>`;
   }
@@ -731,10 +732,10 @@
     const d = selDay, isToday = d === todayStr();
     const list = entries.filter(e => dayOf(e.ts) === d).sort((a, b) => a.ts - b.ts);
     const [title, sub] = dayTitle(d);
-    let h = `<header class="lt"><div><h1>${title}</h1><p>${sub}</p></div>
+    let h = `<header class="lt"><div><h1>${title}</h1><p>${sub}</p></div><button type="button" class="help-q" data-act="help" data-sec="today" aria-label="Pomocník">?</button>
       ${isToday ? '' : '<button type="button" class="btn small" data-act="go-today">Späť na dnes</button>'}</header>`;
     h += stripHtml();
-    if (isToday) h += bannerHtml() + testBannerHtml() + reintroBannerHtml() + weekHtml();
+    if (isToday) h += nudgeHtml(d, list) + bannerHtml() + testBannerHtml() + reintroBannerHtml() + weekHtml();
     if (list.length) {
       h += ribbonHtml(list, d);
       h += '<div class="tl">' + list.map(entryRow).join('') + '</div>';
@@ -763,6 +764,39 @@
   const atHour = (d, h) => parseDay(d).getTime() + h * 3600e3;
   const MEAL_SLOTS = [['raňajky', 4, 10.5, 7.5], ['obed', 10.5, 15.5, 12.5], ['večera', 16.5, 22, 18.5]];
 
+  // Čo chýba: hneď po otvorení navrchu obrazovky Dnes
+  function missingMeals(d, list) {
+    const food = list.filter(e => e.type === 'food');
+    const nowH = d === todayStr() ? (Date.now() - parseDay(d).getTime()) / 3600e3 : 99;
+    return MEAL_SLOTS.filter(([, a, b]) => nowH >= b && !food.some(e => {
+      const x = (e.ts - parseDay(d).getTime()) / 3600e3;
+      return x >= a && x < b;
+    }));
+  }
+  function nudgeHtml(d, list) {
+    let h = '';
+    // dnes: chýba jedlo, ktorého čas už prešiel (len ak sa dnes už niečo zapisovalo alebo je po 10:00)
+    const nowH = (Date.now() - parseDay(d).getTime()) / 3600e3;
+    // nový používateľ bez záznamov za posledné dni sa nemá cítiť napomínaný
+    if (list.length || (nowH >= 10 && entries.some(e => e.ts > Date.now() - 3 * DAY))) {
+      const miss = missingMeals(d, list);
+      if (miss.length) {
+        const names = miss.map(m => m[0]);
+        h += `<div class="banner nudge"><div><b>Nezapísala si ${names.length > 1 ? names.slice(0, -1).join(', ') + ' a ' + names[names.length - 1] : names[0]}</b>Ak si jedla, zapíš to teraz. Ak nie, nič nerob.</div>
+          <div class="nudge-btns">${miss.map(([n, , , at]) => `<button type="button" class="btn small primary" data-act="add-at" data-h="${at}">＋ ${n}</button>`).join('')}</div></div>`;
+      }
+    }
+    // včera: niečo zapísané, ale nevieme, či boli ťažkosti
+    const y = dayOf(Date.now() - DAY);
+    const yList = entries.filter(e => dayOf(e.ts) === y);
+    if (yList.some(e => e.type === 'food') && !yList.some(e => e.type === 'symptom') && !(days[y] && days[y].noSymptoms)) {
+      h += `<div class="banner nudge"><div><b>Včera bez ťažkostí?</b>Včera nie sú zapísané ťažkosti ani „Deň bez ťažkostí“.</div>
+        <div class="nudge-btns"><button type="button" class="btn small primary" data-act="no-sym" data-date="${y}">Áno, bez ťažkostí</button>
+        <button type="button" class="btn small" data-act="sym-at" data-date="${y}">Zapísať ťažkosti</button></div></div>`;
+    }
+    return h;
+  }
+
   function quickToolsHtml(d, list) {
     const isToday = d === todayStr();
     const now = Date.now();
@@ -777,9 +811,9 @@
           '</div><p class="tiny" style="margin:8px 0 0">Ťuknutím zapíšeš.</p></div>';
       }
     }
-    // zabudnuté jedlo: len v dňoch, keď sa niečo zapisovalo, a len za čas, ktorý už prešiel
+    // zabudnuté jedlo v minulých dňoch (dnešok je navrchu obrazovky)
     const food = list.filter(e => e.type === 'food');
-    if (food.length || (isToday && list.length)) {
+    if (!isToday && food.length) {
       const nowH = isToday ? (now - parseDay(d).getTime()) / 3600e3 : 99;
       const miss = MEAL_SLOTS.filter(([, a, b]) => nowH >= b && !food.some(e => {
         const x = (e.ts - parseDay(d).getTime()) / 3600e3;
@@ -1339,7 +1373,7 @@
 
   function renderList() {
     const el = $('#view-list');
-    let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div></header>
+    let h = `<header class="lt"><div><h1>Kalendár</h1><p>Ťukni na deň a otvorí sa jeho denník.</p></div><button type="button" class="help-q" data-act="help" data-sec="list" aria-label="Pomocník">?</button></header>
       <input type="search" id="q" value="${esc(searchQ)}" placeholder="Hľadať v denníku, napr. jogurt" enterkeyhint="search"><div id="q-res"></div>` + renderCalendar();
     const byDay = new Map();
     entries.forEach(e => {
@@ -1944,7 +1978,7 @@
     const minN = meta.minN || 5;
     const r = Analysis.analyze(entries, days, { fromH, toH, minN, riskTags: riskTags() });
 
-    let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom je horšie a po čom dobre.</p></div></header>
+    let h = `<header class="lt"><div><h1>Súvislosti</h1><p>Po čom je horšie a po čom dobre.</p></div><button type="button" class="help-q" data-act="help" data-sec="insights" aria-label="Pomocník">?</button></header>
       <div class="segbar">${INS_TABS.map(([k, l]) => `<button type="button" class="${k === insTab ? 'on' : ''}" data-ins="${k}">${l}</button>`).join('')}</div>`;
     const note = `<p class="foot">Len pomôcka, nie diagnóza. Čísla ukazujú, čo sa časovo zhoduje, nie čo ťažkosti naozaj spôsobuje. Jedlo ani lieky nevynechávaj bez dohody s lekárom.</p>`;
 
@@ -2175,19 +2209,26 @@
   }
 
   // ---------- Večerná pripomienka (udalosť do Kalendára) ----------
+  // [id, text vo formulári, predvolená hodina, nadpis v Kalendári]
+  const REMINDERS = [['ranaj', 'Po raňajkách', 9, 'Denník: zapíš raňajky'], ['obed', 'Po obede', 14, 'Denník: zapíš obed'],
+    ['vecer', 'Večer (celý deň)', 20, 'Denník: aký bol dnešný deň?']];
   async function doReminder() {
-    const hh = $('#rem-time').value;
+    const chosen = REMINDERS.filter(([id]) => $('#rem-' + id) && $('#rem-' + id).checked);
+    if (!chosen.length) { toast('Zapni aspoň jednu pripomienku'); return; }
     const d = new Date();
     const z = n => String(n).padStart(2, '0');
     const day = d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate());
     const stamp = d.toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
-    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//dennik-jedla//SK', 'BEGIN:VEVENT',
-      'UID:pripomienka-' + hh + '@dennik-jedla', 'DTSTAMP:' + stamp, 'DTSTART:' + day + 'T' + hh + '0000', 'DURATION:PT5M',
-      'RRULE:FREQ=DAILY', 'SUMMARY:Denník: aký bol dnešný deň?', 'DESCRIPTION:Otvor Denník jedla a zapíš deň.',
-      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Denník: aký bol dnešný deň?', 'TRIGGER:PT0M', 'END:VALARM',
-      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
-    await saveFile('dennik-pripomienka.ics', 'text/calendar', ics);
+    const ev = chosen.map(([id, , , title]) => {
+      const hh = z(Number($('#remh-' + id).value));
+      return ['BEGIN:VEVENT', 'UID:pripomienka-' + id + '-' + hh + '@dennik-jedla', 'DTSTAMP:' + stamp, 'DTSTART:' + day + 'T' + hh + '0000', 'DURATION:PT5M',
+        'RRULE:FREQ=DAILY', 'SUMMARY:' + title, 'DESCRIPTION:Otvor Denník jedla a zapíš to.', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + title,
+        'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].join('\r\n');
+    });
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//dennik-jedla//SK'].concat(ev, ['END:VCALENDAR']).join('\r\n');
+    await saveFile('dennik-pripomienky.ics', 'text/calendar', ics);
   }
+
 
   // ---------- Záloha a export ----------
   async function saveFile(name, mime, text) {
@@ -2300,7 +2341,11 @@
       ' (' + new Date(lb).toLocaleDateString('sk-SK') + ')' : 'Zatiaľ žiadna záloha';
     const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
     const risk = TAGS.filter(([v]) => riskTags().includes(v)).map(x => x[2]);
-    el.innerHTML = `<header class="lt"><div><h1>Nastavenia</h1></div></header>
+    el.innerHTML = `<header class="lt"><div><h1>Nastavenia</h1></div><button type="button" class="help-q" data-act="help" data-sec="settings" aria-label="Pomocník">?</button></header>
+      <h2 class="sub">Pomoc</h2><div class="dayrows">
+        ${srow('help', 'q', 'accent', 'Pomocník', 'Čo znamená ktorá časť aplikácie')}
+        ${srow('welcome', 'phone', 'food', 'Úvod znova', 'Krátke predstavenie denníka')}
+      </div>
       <h2 class="sub">Moje jedlo</h2><div class="dayrows">
         ${srow('intol-edit', 'warn', 'sym', 'Moje intolerancie', esc(risk.join(', ')) || 'Zatiaľ nič vybrané', risk.length || '')}
         ${srow('favs', 'star', 'sun', 'Obľúbené jedlá', '', favorites().length || '')}
@@ -2317,7 +2362,7 @@
         ${srow('csv', 'table', 'stool', 'Všetky záznamy do tabuľky', 'Súbor CSV pre Excel alebo Numbers')}
       </div>
       <h2 class="sub">Ostatné</h2><div class="dayrows">
-        ${srow('rem-open', 'bell', 'sun', 'Večerná pripomienka', 'Udalosť do Kalendára v iPhone')}
+        ${srow('rem-open', 'bell', 'sun', 'Pripomienky', 'Raňajky, obed, večer cez Kalendár')}
         ${standalone ? '' : srow('install', 'phone', 'med', 'Pridať na plochu', 'Aby sa denník otváral ako aplikácia')}
         ${srow('shortcut', 'open', 'accent', 'Skratky a Siri', 'Zápis jedným ťuknutím z plochy')}
         ${srow('wipe', 'trash', 'danger', 'Vymazať všetky údaje', entries.length + ' záznamov, ' + Object.keys(days).length + ' dní s údajmi', '', true)}
@@ -2350,10 +2395,13 @@
           <button type="button" class="btn ghost small" data-act="rec-del" data-id="${r.id}" aria-label="Zrušiť">✕</button></div>`).join('') + '</div>'
         : '<p class="small muted" style="margin:0">Pri zápise jedla alebo lieku zapni „Opakovať každý deň“. Napríklad ranná káva alebo večerné probiotiká.</p>');
     } else if (kind === 'rem') {
-      title = 'Večerná pripomienka';
-      body = grp('', `<p class="small muted" style="margin:0 0 12px">Aplikácia sama upozorniť nevie. Pripomienku ti však pridá do Kalendára v iPhone ako udalosť, ktorá sa opakuje každý deň.</p>
-        <div class="stack"><select id="rem-time"><option value="19">19:00</option><option value="20" selected>20:00</option><option value="21">21:00</option><option value="22">22:00</option></select>
-        <button type="button" class="btn block" data-act="reminder">Pridať do Kalendára</button></div>`);
+      title = 'Pripomienky';
+      const opt = (id, sel) => `<select id="${id}">${[...Array(17)].map((_, i) => i + 6).map(h => `<option value="${h}"${h === sel ? ' selected' : ''}>${pad(h)}:00</option>`).join('')}</select>`;
+      body = grp('', `<p class="small muted" style="margin:0">Denník je webová stránka a tie v iPhone nemôžu samy plánovať upozornenia. Preto pripomienky pridá do <b>Kalendára</b>:
+          ten ich potom pripomenie každý deň, aj keď je denník zatvorený.</p>`) +
+        grp('Kedy pripomenúť', REMINDERS.map(([id, label, h]) => `<div class="rem-row">${sw('rem-' + id, label, id === 'vecer')}${opt('remh-' + id, h)}</div>`).join('') +
+          `<button type="button" class="btn block" style="margin-top:12px" data-act="reminder">Pridať do Kalendára</button>`) +
+        '<p class="tiny" style="margin:0 4px 12px">Ak si pripomienky už raz pridala, staré v Kalendári zmaž, aby neprišli dvakrát. Navyše ti denník po otvorení sám povie, ak niečo chýba (napríklad obed).</p>';
     } else {
       title = 'Pridať na plochu';
       body = grp('', `<ol class="steps small"><li>Otvor túto stránku v <b>Safari</b>.</li><li>Ťukni na tlačidlo <b>Zdieľať</b> (štvorec so šípkou).</li>
@@ -2385,6 +2433,135 @@
           <button type="button" class="btn ghost small" data-act="ct-del" data-id="${c.id}" aria-label="Zmazať">✕</button></div>`).join('') + '</div>' : ''}`) +
       `<div class="savebar"><button type="button" class="btn primary" data-act="mini-close">Hotovo</button></div>`;
     if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
+  }
+
+  // ---------- Úvod pri prvom spustení ----------
+  // Tri krátke obrazovky. Ukáže sa raz, potom už len z Pomocníka („Úvod znova“).
+  let welcomeStep = 0;
+  function welcomeHtml() {
+    const risk = riskTags();
+    const steps = [
+      `<div class="wl-ico">${ic('food')}</div><h2>Vitaj v Denníku jedla</h2>
+        <p>Zapisuješ, čo ješ a kedy ťa trápi brucho. Denník potom sám hľadá, po čom sú ťažkosti častejšie a po čom je pokoj.</p>
+        <p class="muted">Všetko ostáva len v tomto telefóne. Nič sa nikam neposiela.</p>`,
+      `<div class="wl-ico">${ic('check')}</div><h2>Čo zapisovať</h2>
+        <ul class="why wl-list"><li><b>Jedlo a pitie</b> tlačidlom ＋ dole, čo najskôr po jedle.</li>
+          <li><b>Ťažkosti</b> hneď, keď prídu. Stačí ťuknúť na číslo 1 až 10 na obrazovke Dnes.</li>
+          <li><b>Večer „Deň bez ťažkostí“</b>, ak nebolo nič. Je to rovnako dôležité.</li></ul>
+        <p class="muted">Prvé výsledky budú asi po dvoch týždňoch. Ak niečomu nerozumieš, ťukni na ? pri nadpise.</p>`,
+      `<div class="wl-ico">${ic('warn')}</div><h2>Vieš, čo ti vadí?</h2>
+        <p>Označ, čo už tušíš. Denník na to upozorní pri zápise a bude to sledovať podrobnejšie.</p>
+        <div class="chips">${TAGS.filter(x => !x[0].startsWith('c_')).map(([v, e, t]) => `<button type="button" class="chip${risk.includes(v) ? ' on' : ''}" data-intol="${v}">${esc(t)}</button>`).join('')}</div>
+        <p class="muted">Nevieš? Nevadí, nastavíš to neskôr v Nastaveniach.</p>`,
+    ];
+    const last = welcomeStep === steps.length - 1;
+    return `<div class="welcome">${steps[welcomeStep]}</div>
+      <div class="wl-dots">${steps.map((_, i) => `<i class="${i === welcomeStep ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="savebar">${last ? '' : '<button type="button" class="btn" data-act="wl-done">Preskočiť</button>'}
+        <button type="button" class="btn primary" data-act="${last ? 'wl-done' : 'wl-next'}">${last ? 'Začať' : 'Ďalej'}</button></div>`;
+  }
+  function openWelcome() {
+    welcomeStep = 0;
+    // ukáže sa len raz, aj keď ho používateľ zavrie potiahnutím
+    if (!meta.onboarded) setMeta('onboarded', true).catch(() => {});
+    $('#mini-sheet').innerHTML = welcomeHtml();
+    if (openSheets.includes('help-sheet')) closeSheet('help-sheet');
+    if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
+  }
+
+  // ---------- Pomocník ----------
+  // Vysvetlenie každej časti aplikácie; hľadá sa podľa názvu, ktorý používateľ vidí na obrazovke.
+  const HELP_SECS = [['today', 'Dnes'], ['entry', 'Zápis (tlačidlo ＋)'], ['list', 'Kalendár'], ['insights', 'Súvislosti'], ['mine', 'Súvislosti – Moje'], ['settings', 'Nastavenia']];
+  const HELP = [
+    ['today', 'Pásik dní', 'Posledné týždne. Ťuknutím otvoríš deň. Bodka pod dňom: zelená = bez ťažkostí, žltá, oranžová, červená = slabé, stredné, silné ťažkosti, sivá = niečo zapísané, ale nevieme, či boli ťažkosti.'],
+    ['today', 'Stuha dňa', 'Celý deň na jednej čiare. Zelené čiarky hore sú jedlá, farebné krúžky dole ťažkosti (väčší = silnejšie). Prerušovaná čiara je teraz. Deň trvá od 4:00 do 4:00, takže neskorá večera patrí k správnemu dňu.'],
+    ['today', 'Rizikové suroviny v tento deň', 'Koľkokrát si v ten deň zjedla niečo z tvojich intolerancií (nastavuješ ich v Nastaveniach).'],
+    ['today', 'Máš teraz ťažkosti?', 'Najrýchlejší zápis: ťukni na číslo 1 až 10 a ťažkosti sú zapísané s aktuálnym časom. Druh a miesto môžeš doplniť cez „Doplniť“ v ozname.'],
+    ['today', 'Chýba obed? (raňajky, večera)', 'Ak v dni so záznamami chýba bežné jedlo, denník sa spýta. Ťuknutím ho zapíšeš s typickým časom, ktorý môžeš zmeniť. Ak si naozaj nejedla, nič nerob.'],
+    ['today', 'Pravidelné', 'Veci, ktoré si nastavila na každý deň (napr. ranná káva, probiotiká). Keď sa blíži ich čas, zapíšeš ich jedným ťuknutím.'],
+    ['today', 'Aký bol dnešný deň?', 'Spánok, menštruácia, pohyb a pitie raz za deň. Nepovinné, ale pomáha zistiť, či ťažkosti nesúvisia s dňom, nielen s jedlom.'],
+    ['today', 'Deň bez ťažkostí', 'Ťukni večer, ak v ten deň nebolo nič. Je to rovnako dôležité ako zapisovať ťažkosti: bez toho denník nevie, či bol deň pokojný, alebo si len nezapisovala.'],
+    ['today', 'Tvoj týždeň', 'V nedeľu večer až v utorok zhrnutie týždňa: koľko dní bolo s ťažkosťami v porovnaní s minulým týždňom a jedna rada. Krížikom ho skryješ.'],
+    ['today', 'Zavádzanie (pruh hore)', 'Prebieha opätovné zavedenie: každý deň ti povie, akú porciu zjesť. Po zjedení ťukni „Zjedla som“ a sleduj ťažkosti. Viac v časti Súvislosti – Moje.'],
+    ['entry', 'Typ záznamu', 'Hore prepínaš Jedlo, Ťažkosti, Stolica a Lieky. Napísaný text sa pri prepnutí nestratí.'],
+    ['entry', 'Ako včera', 'Čo si včera zapísala v podobnom čase. Jedným ťuknutím to isté dnes.'],
+    ['entry', 'Naposledy jedené', 'Časté jedlá, ráno najmä raňajky, na obed obedy. Ťuknutím na viac položiek sa pridajú za seba, druhým ťuknutím položku odoberieš. Hviezdička vedľa názvu uloží jedlo medzi obľúbené.'],
+    ['entry', 'Kedy?', '„teraz“, „–30 min“ a ďalšie posunú čas. Iný dátum a čas nastavíš v políčkach pod tým.'],
+    ['entry', 'Koľko?', 'Veľkosť porcie. Pri intoleranciách často rozhoduje množstvo, preto sa veľká porcia ráta viac a malá menej.'],
+    ['entry', 'Obsahovalo (skupiny potravín)', 'Skupiny ako mliečne, lepok, cibuľa a cesnak. Značka ✦ znamená, že ich denník rozpoznal z popisu sám. Ťuknutím skupinu zrušíš alebo pridáš.'],
+    ['entry', 'Laktáza / enzým', 'Zapni, ak si k jedlu vzala tabletku laktázy alebo iný enzým. Vyhodnotenie potom ukáže, či pomáha.'],
+    ['entry', 'Jedla som v zhone', 'Jedenie v rýchlosti niekedy samo zhorší trávenie. Denník to porovná.'],
+    ['entry', 'Odkiaľ je jedlo?', 'Kto jedlo pripravil: uvarené doma, reštaurácia alebo jedáleň, u niekoho na návšteve, alebo kúpené hotové v obchode či bufete. Ukáže, či vadí skôr jedlo, ktoré nie je z domu (iné suroviny, viac tuku, skryté zloženie).'],
+    ['entry', 'Opakovať každý deň', 'Pri jedle alebo lieku, ktoré berieš denne. Na obrazovke Dnes sa potom ukáže na zápis jedným ťuknutím.'],
+    ['entry', 'Stres, nálada, poznámka', 'Nepovinné. Stres a nálada pri jedle môžu ovplyvniť trávenie.'],
+    ['entry', 'Aké silné? (ťažkosti)', '1 je slabé, 10 neznesiteľné. Farba sa mení od zelenej po červenú.'],
+    ['entry', 'Stolica: Bristolská škála', 'Škála, ktorú používajú lekári: 1–2 zápcha, 3–4 v poriadku, 5–7 riedka.'],
+    ['entry', 'Skenovanie čiarového kódu', 'Pri balených výrobkoch načíta názov a zloženie z databázy Open Food Facts. Posiela sa tam len číslo kódu.'],
+    ['entry', 'Zapísať znova teraz', 'Pri úprave jedla alebo lieku: zapíše to isté s dnešným časom.'],
+    ['list', 'Farby v kalendári', 'Zelená = deň bez ťažkostí, žltá, oranžová, červená = slabé, stredné, silné ťažkosti, sivá = zapísané, ale nevieme o ťažkostiach. Ružová bodka = menštruácia.'],
+    ['list', 'Hľadať v denníku', 'Napíš jedlo alebo slovo a ukážu sa všetky záznamy, kde sa vyskytuje.'],
+    ['insights', 'Hlavné podozrenie', 'Jedlo alebo skupina, ktorá najviac vyzerá, že súvisí s ťažkosťami. Spája všetky výpočty dokopy (po jedle, za deň, na druhý deň, najhoršie dni), aby si výsledky neodporovali.'],
+    ['insights', 'Číslo 2,1× (koľkokrát)', '2× znamená, že po tomto jedle prišli ťažkosti dvakrát častejšie ako po ostatných. „Výrazne“ znamená, že inak sa ťažkosti v sledovanom čase neobjavili vôbec.'],
+    ['insights', 'Bodky: málo údajov, náznak, silnejší vzorec', 'Koľko údajov je za číslom. Jedna bodka je málo, tri sú silnejší vzorec. Pri jednej bodke ešte nič neuzatváraj.'],
+    ['insights', 'Podrobnosti podozrivého', 'Všetky výpočty k jednému jedlu, graf za koľko hodín po jedle prišli ťažkosti a zoznam konkrétnych jedál. Ťuknutím na jedlo otvoríš ten deň.'],
+    ['insights', 'Za koľko po jedle prišli ťažkosti', 'Červené pruhy: po tomto jedle. Sivé: po ostatných jedlách. Ak sú ťažkosti po jedle častejšie v istom čase (napr. 1–2 h), je to silnejšia stopa.'],
+    ['insights', 'Ďalšie podozrenia', 'Ďalšie jedlá a okolnosti, ktoré vyzerajú podozrivo, ale slabšie.'],
+    ['insights', 'Najlepšie znášané', 'Jedlá, po ktorých ťažkosti prichádzajú zriedkavo.'],
+    ['insights', 'Zatiaľ málo údajov', 'Jedlá, ktoré ešte neboli zjedené dosť často (štandardne 5×). Vyhodnotia sa, keď údaje pribudnú.'],
+    ['insights', 'Všetky výpočty', 'Pôvodné podrobné tabuľky: jedlá, skupiny, rizikové jedlo, hromadenie, na druhý deň.'],
+    ['insights', 'Skupiny a okolnosti jedla', 'Skupiny potravín (mliečne, lepok…) a okolnosti: jedlo po 20:00, po dlhej pauze, káva ako prvé za deň, v zhone, odkiaľ je jedlo.'],
+    ['insights', 'Rizikové jedlo – kedy vadí viac', 'Porovnáva len jedlá s tvojimi intoleranciami: vadia viac, keď nie sú z domu, pri strese, počas menštruácie, po zlom spánku? A pomáha enzým?'],
+    ['insights', 'Hromadenie', 'Vadí, keď sa tá istá skupina za 12 hodín zje viackrát?'],
+    ['insights', 'Na druhý deň (12–48 h)', 'Niektoré intolerancie sa prejavia až neskôr. Tu sú jedlá, po ktorých prišli ťažkosti o 12 až 48 hodín.'],
+    ['insights', 'Dávka za deň', 'Porovnáva dni, keď sa skupina nazbierala (2 a viac porcií), s ostatnými. Ak vadí až väčšie množstvo, ukáže sa to tu, aj keď jedno jedlo samo nevadí.'],
+    ['insights', 'Okolnosti dňa', 'Dni so zlým spánkom, menštruáciou, bez pohybu, s málo pitia, a fázy cyklu: dni pred menštruáciou (luteálna fáza) a po nej (folikulárna).'],
+    ['insights', 'Najhoršie a najlepšie dni', 'Čo sa jedlo len v najhorších dňoch a čo len v najlepších. „Bolo v oboch“ zvyčajne nerozhoduje, pokiaľ nevadí až väčšie množstvo.'],
+    ['mine', 'Moje zistenia', 'Tvoj vlastný zoznam: čo vadí, čo nevadí a čo je podozrivé. Zapíšeš ho z výsledkov tlačidlom „Zapísať zistenie“ alebo ručne.'],
+    ['mine', 'Test podozrivého (vynechanie)', 'Čísla ukážu len podozrenie. Istotu dá test: jednu vec na 7 až 21 dní vynechať a porovnať dni s ťažkosťami pred testom a počas neho. Vždy len jednu vec naraz.'],
+    ['mine', 'Opätovné zavedenie', 'Keď bolo bez niečoho lepšie, vráti sa to späť: 3 dni po sebe malá, bežná a väčšia porcia. Denník sleduje ťažkosti 24 h po každej dávke a povie, či to vadí a od akého množstva. Pri alergii to nerob.'],
+    ['mine', 'Prehľad pre lekára', 'Zhrnutie posledných 30 dní na jednu stranu: graf ťažkostí, stolica, podozrenia, zistenia a lieky. Dá sa vytlačiť, uložiť ako PDF alebo poslať ako text.'],
+    ['mine', 'Nastavenie výpočtu', 'Za koľko hodín po jedle sa ťažkosti priradia k jedlu (štandardne 0–6 h) a koľkokrát treba jedlo zjesť, kým sa vyhodnotí (štandardne 5×).'],
+    ['settings', 'Moje intolerancie', 'Suroviny, o ktorých vieš, že ti vadia. Denník na ne upozorní pri zápise a vo výsledkoch ich sleduje podrobnejšie.'],
+    ['settings', 'Moje jedlá', 'Jedlo, ktoré často varíš, rozpíšeš na suroviny (napr. mamine halušky = halušky, bryndza, slanina). Keď ho potom zapíšeš len názvom, suroviny sa zarátajú.'],
+    ['settings', 'Pravidelné záznamy', 'Zoznam vecí, ktoré sa opakujú každý deň. Tu ich môžeš zrušiť.'],
+    ['settings', 'Záloha', 'Údaje sú len v tomto telefóne. Raz týždenne ulož zálohu (napr. do Súborov alebo na iCloud). Ak telefón stratíš alebo vymažeš údaje Safari, bez zálohy sú preč.'],
+    ['settings', 'Všetky záznamy do tabuľky', 'Súbor CSV pre Excel alebo Numbers, napríklad pre lekára alebo výživového poradcu.'],
+    ['settings', 'Pripomienky', 'Aplikácia na webe sama upozorniť nevie. Pripomienky preto pridá do Kalendára v iPhone a upozornenie pošle Kalendár.'],
+    ['settings', 'Skratky a Siri', 'Zápis jedným ťuknutím z plochy (Android: podrž ikonu) alebo cez aplikáciu Skratky na iPhone.'],
+  ];
+  const normH = t => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+  function openHelp(sec) {
+    const secs = HELP_SECS.map(([k, l]) => {
+      const items = HELP.filter(x => x[0] === k);
+      return `<section class="help-sec" data-hs="${k}"><h3>${l}</h3>` + items.map(([, t, txt]) =>
+        `<details class="help-item" data-ht="${esc(normH(t + ' ' + txt))}"${sec && k === sec ? '' : ''}><summary>${esc(t)}</summary><p>${esc(txt)}</p></details>`).join('') + '</section>';
+    }).join('');
+    $('#help-sheet').innerHTML = `<div class="sheet-head"><h2>Pomocník</h2><button type="button" class="x" data-act="help-close" aria-label="Zavrieť">✕</button></div>
+      <input type="search" id="help-q" placeholder="Hľadať, napr. bodky, dávka, odkiaľ" enterkeyhint="search">
+      <div class="help-tabs">${HELP_SECS.map(([k, l]) => `<button type="button" class="chip${k === sec ? ' on' : ''}" data-hsec="${k}">${l.replace(' (tlačidlo ＋)', '')}</button>`).join('')}</div>
+      <div id="help-list">${secs}</div><p class="help-none" hidden>Nič sa nenašlo. Skús iné slovo.</p>
+      <div class="savebar"><button type="button" class="btn" data-act="welcome">Úvod znova</button><button type="button" class="btn primary" data-act="help-close">Hotovo</button></div>`;
+    openSheet('help-sheet');
+    if (sec) jumpHelp(sec);
+  }
+  function jumpHelp(sec) {
+    $$('[data-hsec]').forEach(c => c.classList.toggle('on', c.dataset.hsec === sec));
+    const el = $(`.help-sec[data-hs="${sec}"]`);
+    if (el) $('#help-sheet').scrollTop = el.offsetTop - 140;
+  }
+  function filterHelp(q) {
+    const n = normH(q.trim());
+    let any = false;
+    $$('.help-item').forEach(d => {
+      const hit = !n || d.dataset.ht.includes(n);
+      d.hidden = !hit;
+      if (n && hit) d.open = true;
+      if (!n) d.open = false;
+      any = any || hit;
+    });
+    $$('.help-sec').forEach(s => { s.hidden = ![...s.querySelectorAll('.help-item')].some(d => !d.hidden); });
+    $('.help-none').hidden = any;
   }
 
   // ---------- Udalosti ----------
@@ -2474,6 +2651,9 @@
       it.classList.toggle('on', list.includes(v));
       return;
     }
+
+    const hs = t.closest('[data-hsec]');
+    if (hs) { jumpHelp(hs.dataset.hsec); return; }
 
     const ins = t.closest('[data-ins]');
     if (ins) { insTab = ins.dataset.ins; renderInsights(); return; }
@@ -2579,6 +2759,12 @@
         flashId = e.id;
         render();
         toast(`Zapísané: ťažkosti ${sev}/10`, { label: 'Doplniť', run: () => startEdit(e.id) });
+        break;
+      }
+      case 'sym-at': {
+        openEntry();
+        draft = Object.assign(newDraft('symptom'), { ts: atHour(act.dataset.date, 18), tsTouched: true, tsCustom: true });
+        renderForm();
         break;
       }
       case 'add-at': {
@@ -2836,6 +3022,11 @@
       }
       case 'prod-clear': draft.product = null; renderForm(); break;
       case 'report-close': closeSheet('report-sheet'); break;
+      case 'help': openHelp(act.dataset.sec || ''); break;
+      case 'help-close': closeSheet('help-sheet'); break;
+      case 'welcome': openWelcome(); break;
+      case 'wl-next': welcomeStep++; $('#mini-sheet').innerHTML = welcomeHtml(); $('#mini-sheet').scrollTop = 0; break;
+      case 'wl-done': await setMeta('onboarded', true); closeSheet('mini-sheet'); render(); break;
       case 'report-print': window.print(); break;
       case 'report-share': shareReport(); break;
       case 'reminder': doReminder(); break;
@@ -2852,6 +3043,7 @@
     else if (t.id === 'f-note') draft.note = t.value;
     else if (t.id === 'f-amount') draft.amount = t.value;
     else if (t.id === 'q') { searchQ = t.value; renderSearch(); }
+    else if (t.id === 'help-q') filterHelp(t.value);
     else if (t.id === 'f-duration') {
       draft.duration = t.value;
       const g = $('.chips[data-field="duration"]');
@@ -2947,7 +3139,8 @@
     }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     switchView('today');
-    openFromLink();
+    if (!meta.onboarded && !entries.length && !location.search.includes('add=')) openWelcome();
+    else openFromLink();
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       // keď sa nainštaluje nová verzia, stránku raz obnovíme, aby sedeli všetky súbory
       const hadController = !!navigator.serviceWorker.controller;
