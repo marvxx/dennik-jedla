@@ -118,6 +118,28 @@
   const susConf = s => Math.max(1, ...s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').map(g => conf(g.x)));
   const susRatio = s => s.top ? ratioText(s.top.x) : '';
 
+  // Jedlo, ktoré obsahuje podozrivú skupinu (syr, kefír → mliečne), je tá istá stopa.
+  // Ukáže sa pod skupinou, nie ako samostatné podozrenie.
+  function groupSuspects(list) {
+    const groups = list.filter(s => s.id.startsWith('tag:'));
+    const kids = new Map();
+    const rest = [];
+    for (const s of list) {
+      if (!s.id.includes(':')) {
+        const tags = Analysis.detectTags(Analysis.expand(s.name));
+        const parent = groups.find(g => tags.includes(g.id.slice(4)));
+        if (parent) {
+          if (!kids.has(parent.id)) kids.set(parent.id, []);
+          kids.get(parent.id).push(s);
+          continue;
+        }
+      }
+      rest.push(s);
+    }
+    rest.forEach(s => { s.kids = kids.get(s.id) || []; });
+    return rest;
+  }
+
   // Hlavné podozrenie navrchu Súvislostí
   function heroHtml(s) {
     const lines = s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').sort((a, b) => b.x.ratio - a.x.ratio)
@@ -128,6 +150,8 @@
     return `<div class="card hero v-${s.verdict}"><p class="eyebrow">Hlavné podozrenie</p>
       <div class="res-top"><h2 class="res-name">${esc(s.name)}</h2><span class="ratio">${susRatio(s)}</span></div>
       <ul class="why">${lines.map(g => `<li>${sigSentence(g, s)}</li>`).join('')}</ul>
+      ${s.kids && s.kids.length ? `<div class="kids"><p class="tiny">Patria sem aj jedlá, ktoré to obsahujú:</p><div class="chips">` +
+        s.kids.map(k => `<button type="button" class="chip" data-sus="${esc(k.id)}">${esc(k.name)}${k.top ? ` <span>${susRatio(k)}</span>` : ''}</button>`).join('') + '</div></div>' : ''}
       <div class="res-foot"><span class="conf c${c}"><i></i><i></i><i></i>${CONF_TXT[c]}</span></div>
       <div class="hero-btns"><button type="button" class="btn small" data-sus="${esc(s.id)}">Podrobnosti</button>
         ${testable ? `<button type="button" class="btn small primary" data-act="test-for" data-sus-id="${esc(s.id)}">Vyskúšať bez toho</button>` : ''}</div></div>`;
@@ -137,7 +161,7 @@
     return '<div class="dayrows flat">' + list.map(s => {
       const g = s.top;
       return `<button type="button" class="dayrow sus-row v-${s.verdict}" data-sus="${esc(s.id)}"><span class="dot"></span>
-        <span><b>${esc(s.name)}</b><small>${g ? sigSentence(g, s) : ''}</small></span><span class="ratio">${susRatio(s)}</span><span class="chev">›</span></button>`;
+        <span><b>${esc(s.name)}</b><small>${g ? sigSentence(g, s) : ''}</small>${s.kids && s.kids.length ? `<small class="kids-t">Patrí sem aj: ${esc(s.kids.map(k => k.name).join(', '))}</small>` : ''}</span><span class="ratio">${susRatio(s)}</span><span class="chev">›</span></button>`;
     }).join('') + '</div>';
   }
 

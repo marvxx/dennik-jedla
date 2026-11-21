@@ -207,8 +207,9 @@
     // čo je podozrivé z iného pohľadu (napr. dávka za deň), nepatrí medzi dobre znášané
     const tol = toleratedList(r).filter(x => !sus.some(s => s.id === x.key));
     if (insTab === 'sus') {
-      const hero = sus[0] && sus[0].score >= 2 ? sus[0] : null;
-      const others = sus.filter(s => s !== hero).slice(0, 8);
+      const shown = groupSuspects(sus);
+      const hero = shown[0] && shown[0].score >= 2 ? shown[0] : null;
+      const others = shown.filter(s => s !== hero).slice(0, 8);
       h += hero ? heroHtml(hero) : `<div class="card"><h2>V skratke</h2><p class="small muted" style="margin:0">Zatiaľ nič nevyzerá výrazne podozrivo.
         Zapisuj ďalej, najmä aj dni bez ťažkostí.</p></div>`;
       if (others.length) h += `<div class="card"><h2>${hero ? 'Ďalšie podozrenia' : 'Možné podozrenia'}</h2>${susRowsHtml(others)}</div>`;

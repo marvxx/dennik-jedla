@@ -938,3 +938,23 @@ details.more.pend > summary { padding: 6px 0; font-size: .8824rem; color: var(--
 .cal-hl { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; font-size: .8235rem; color: var(--ink-2); }
 .cal-hl i { flex-shrink: 0; width: 12px; height: 12px; margin-top: 3px; border-radius: 50%; box-shadow: 0 0 0 2px var(--accent); }
 .theme-seg { margin: 0 0 6px; }
+
+/* ---------- 3.8: rýchly zápis v jednej karte, kratší formulár jedla, skupiny podozrení ---------- */
+.card.quick.qz { padding: 14px 16px 8px; }
+.qz-part + .qz-part { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.qz-part h3 .tiny { font-family: inherit; font-weight: 500; font-size: .7647rem; color: var(--ink-3); margin-left: 6px; }
+.qz .drink { display: grid; gap: 4px; }
+.fdet > summary { display: flex; align-items: baseline; gap: 4px; }
+.fdet-sum { font-weight: 500; font-size: .8235rem; color: var(--ink-3); margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fdet[open] .fdet-sum { display: none; }
+.fdet .field { margin-bottom: 16px; }
+.fdet .sws { display: grid; gap: 2px; }
+.chips.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.chips.g2 .chip { text-align: center; }
+.hero .kids { margin: 12px 0 4px; }
+.hero .kids .tiny { margin: 0 0 6px; }
+.hero .kids .chips { gap: 6px; }
+.hero .kids .chip { background: var(--surface-2); border-color: transparent; font-weight: 600; min-height: 40px; padding: 6px 14px; }
+.hero .kids .chip span { color: var(--ink-3); font-weight: 600; margin-left: 2px; }
+.sus-row small.kids-t { color: var(--ink-3); margin-top: 2px; }
+.sheet:not(.open) { pointer-events: none; }

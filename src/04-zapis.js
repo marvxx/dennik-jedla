@@ -118,10 +118,28 @@
     return r.length ? 'Z Mojich jedál: <b>' + esc(r.map(x => x.ing).join(', ')) + '</b>' : '';
   }
 
+  // Laktáza / enzým má zmysel len pri jedle s mliečnym alebo s mojou intoleranciou
+  function enzymeHtml() {
+    const eff = effectiveTags(), risk = riskTags();
+    const show = draft.enzyme || eff.includes('mliecne') || eff.some(t => risk.includes(t));
+    return show ? sw('f-enzyme', 'Užila som laktázu / enzým', draft.enzyme) : '';
+  }
+  // čo je v zbalených Podrobnostiach, vidno aj bez otvorenia
+  function detSummary() {
+    const p = effectiveTags().map(tagLabel).slice(0, 3);
+    if (draft.place && draft.place !== 'doma') p.push(lab(PLACES_SHORT, draft.place));
+    if (draft.rushed) p.push('v zhone');
+    return esc(p.join(', '));
+  }
+
   function refreshFoodExtras() {
     if (draft.type !== 'food') return;
     const tc = $('#tag-chips');
     if (tc) tc.outerHTML = tagChips();
+    const ew = $('#enz-wrap');
+    if (ew && !$('#f-enzyme:focus')) ew.innerHTML = enzymeHtml();
+    const ds = $('#fdet-sum');
+    if (ds) ds.innerHTML = detSummary();
     const rw = $('#risk-warn');
     if (rw) rw.innerHTML = riskWarnHtml();
     const rh = $('#rc-hint');
@@ -155,7 +173,7 @@
       (src.tags || []).forEach(t => tags.add(t));
       draft.tags = [...tags];
       draft.noTags = append ? draft.noTags.concat(src.noTags || []) : (src.noTags || []).slice();
-      if (src.place && (!append || !draft.place)) { draft.place = src.place; const g = $('.chips[data-field="place"]'); if (g) refreshGroup(g, draft.place); const dt = $('#ctx-more'); if (dt) dt.open = true; }
+      if (src.place && (!append || !draft.place)) { draft.place = src.place; const g = $('.chips[data-field="place"]'); if (g) refreshGroup(g, draft.place); }
       if (src.product && !append) draft.product = src.product;
       if (src.portion && !append) { draft.portion = src.portion; const g = $('.chips[data-field="portion"]'); if (g) refreshGroup(g, draft.portion); }
     }
@@ -267,11 +285,17 @@
       h += grp('Koľko?', chipGroup('portion', PORTION, { cls: 'seg' }) +
         `<input type="text" id="f-amount" style="margin-top:10px" value="${esc(draft.amount)}" placeholder="presnejšie, napr. pol balenia, 5 ks" enterkeyhint="done">` +
         (draft.product && draft.product.quantity ? `<p class="tiny" style="margin:6px 0 0">Celé balenie: ${esc(draft.product.quantity)}</p>` : ''));
-      h += grp('Obsahovalo', tagChips() + `<p class="tiny" id="rc-hint" style="margin:8px 0 0">${recipeHint()}</p>` +
-        '<p class="tiny" style="margin:8px 0 0">✦ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>');
-      h += grp('', sw('f-enzyme', 'Užila som laktázu / enzým', draft.enzyme) + sw('f-rushed', 'Jedla som v zhone', draft.rushed));
-      h += grp('Odkiaľ je jedlo?', chipGroup('place', PLACES, { cls: 'col' }) +
-        '<p class="tiny" style="margin:8px 0 0">Kto jedlo pripravil. Ukáže, či vadí skôr jedlo, ktoré nie je z domu.</p>');
+      // menej častá časť formulára je zbalená; pri úprave sa otvorí, ak je v nej niečo vyplnené
+      const detOpen = draft.detOpen != null ? draft.detOpen
+        : !!(editingId && (draft.place || draft.rushed || draft.enzyme || draft.rec || draft.tags.length || draft.noTags.length));
+      h += `<details class="grp more fdet" id="food-more"${detOpen ? ' open' : ''}><summary>Podrobnosti <span class="fdet-sum" id="fdet-sum">${detSummary()}</span></summary>` +
+        field('Obsahovalo', tagChips() + `<p class="tiny" id="rc-hint" style="margin:8px 0 0">${recipeHint()}</p>` +
+          '<p class="tiny" style="margin:8px 0 0">✦ = rozpoznané z popisu. Ťuknutím zrušíš alebo pridáš.</p>') +
+        field('Odkiaľ je jedlo?', chipGroup('place', PLACES_SHORT, { cls: 'g2' }) +
+          '<p class="tiny" style="margin:8px 0 0">Kto jedlo pripravil. Ukáže, či vadí skôr jedlo, ktoré nie je z domu.</p>') +
+        `<div class="sws"><div id="enz-wrap">${enzymeHtml()}</div>${sw('f-rushed', 'Jedla som v zhone', draft.rushed)}` +
+        sw('f-rec', 'Opakovať každý deň o ' + fmtTime(draft.ts), draft.rec) +
+        '<p class="tiny" style="margin:6px 0 0">Pravidelné sa na obrazovke Dnes ukáže na zápis jedným ťuknutím.</p></div></details>';
     } else if (t === 'symptom') {
       h += grp('Aké ťažkosti?', chipGroup('kinds', KINDS, { multi: true }));
       h += grp('Aké silné?', chipGroup('severity', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]),
@@ -290,7 +314,7 @@
       h += descField('Aký liek alebo čo iné?');
       h += timeField();
     }
-    if (t === 'food' || t === 'med') h += grp('', sw('f-rec', 'Opakovať každý deň o ' + fmtTime(draft.ts), draft.rec) +
+    if (t === 'med') h += grp('', sw('f-rec', 'Opakovať každý deň o ' + fmtTime(draft.ts), draft.rec) +
       '<p class="tiny" style="margin:6px 0 0">Na obrazovke Dnes sa potom ukáže na zápis jedným ťuknutím.</p>');
     h += moreBlock();
 
@@ -321,6 +345,7 @@
   }
 
   async function saveDraft() {
+    if (!draft.type || !openSheets.includes('entry-sheet')) return;   // ťuknutie počas zatvárania panela
     const err = validate();
     if (err) {
       if (err[0]) { const el = document.getElementById(err[0]); if (el) { el.classList.add('invalid'); el.focus(); } }

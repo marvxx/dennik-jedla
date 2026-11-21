@@ -170,7 +170,8 @@
     let h = `<header class="lt"><div><h1>${title}</h1><p>${sub}</p></div><button type="button" class="help-q" data-act="help" data-sec="today" aria-label="Pomocník">?</button>
       ${isToday ? '' : '<button type="button" class="btn small" data-act="go-today">Späť na dnes</button>'}</header>`;
     h += stripHtml();
-    if (isToday) h += nudgeHtml(d, list) + bannerHtml() + testBannerHtml() + reintroBannerHtml() + weekHtml();
+    if (isToday) h += nudgeHtml(d, list) + bannerHtml() + testBannerHtml() + reintroBannerHtml();
+    h += quickCardHtml(d, list);
     if (list.length) {
       h += ribbonHtml(list, d);
       h += '<div class="tl">' + list.map(entryRow).join('') + '</div>';
@@ -178,8 +179,8 @@
       h += `<div class="card empty"><div class="big"></div>
         <p><b>${isToday ? 'Dnes zatiaľ nič zapísané' : 'V tento deň nie je nič zapísané'}</b><br>Ťukni dole na ＋ a zapíš jedlo alebo ťažkosti.</p></div>`;
     }
-    h += quickToolsHtml(d, list);
-    h += drinkHtml(d, list);
+    if (isToday) h += weekHtml();
+    h += missHtml(d, list);
     h += dayCardHtml(d);
     el.innerHTML = h;
     flashId = null;
@@ -233,40 +234,39 @@
     return h;
   }
 
-  function quickToolsHtml(d, list) {
+  // Jedna karta na dosah palca hneď pod pásikom dní: ťažkosti, pravidelné, voda a káva
+  function quickCardHtml(d, list) {
     const isToday = d === todayStr();
     const now = Date.now();
     let h = '';
-    // pravidelné záznamy, ktoré dnes ešte nie sú zapísané a ich čas sa blíži alebo prešiel
     if (isToday) {
+      h += `<div class="qz-part"><h3>Máš teraz ťažkosti?</h3><div class="chips sevrow">` +
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button type="button" class="chip sev-${n}" data-act="quick-sym" data-v="${n}" style="--sc:${sevColor(n)}">${n}</button>`).join('') +
+        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div></div>';
+      // pravidelné záznamy, ktoré dnes ešte nie sú zapísané a ich čas sa blíži alebo prešiel
       const todayKeys = new Set(list.map(e => recKey(e.type, e.desc)));
       const due = recurring().filter(r => !todayKeys.has(recKey(r.type, r.desc)) && now >= atHour(d, r.h + r.m / 60) - 30 * 60e3);
       if (due.length) {
-        h += `<div class="card quick"><h3>Pravidelné</h3><div class="chips">` + due.map(r =>
+        h += `<div class="qz-part"><h3>Pravidelné <span class="tiny">ťuknutím zapíšeš</span></h3><div class="chips">` + due.map(r =>
           `<button type="button" class="chip rec" data-act="rec-log" data-id="${r.id}"><span class="tico ${r.type}">${TYPES[r.type].ico}</span> ${esc(r.desc)} <span class="tiny">${pad(r.h)}:${pad(r.m)}</span></button>`).join('') +
-          '</div><p class="tiny" style="margin:8px 0 0">Ťuknutím zapíšeš.</p></div>';
+          '</div></div>';
       }
     }
-    // zabudnuté jedlo v minulých dňoch (dnešok je navrchu obrazovky)
+    h += `<div class="qz-part">${drinkHtml(d, list)}</div>`;
+    return `<div class="card quick qz">${h}</div>`;
+  }
+
+  // zabudnuté jedlo v minulých dňoch (dnešok má upozornenie navrchu obrazovky)
+  function missHtml(d, list) {
     const food = list.filter(e => e.type === 'food');
-    if (!isToday && food.length) {
-      const nowH = isToday ? (now - parseDay(d).getTime()) / 3600e3 : 99;
-      const miss = MEAL_SLOTS.filter(([, a, b]) => nowH >= b && !food.some(e => {
-        const x = (e.ts - parseDay(d).getTime()) / 3600e3;
-        return x >= a && x < b;
-      }));
-      if (miss.length && miss.length < 3) {
-        h += `<div class="card quick miss"><span>${miss.length === 1 ? 'Chýba ' + miss[0][0] + '?' : 'Chýbajú ' + miss.map(m => m[0]).join(' a ') + '?'}</span><div class="chips">` +
-          miss.map(([n, , , at]) => `<button type="button" class="chip" data-act="add-at" data-h="${at}">＋ ${n}</button>`).join('') + '</div></div>';
-      }
-    }
-    // rýchly zápis ťažkostí jedným ťuknutím
-    if (isToday) {
-      h += `<div class="card quick"><h3>Máš teraz ťažkosti?</h3><div class="chips sevrow">` +
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button type="button" class="chip sev-${n}" data-act="quick-sym" data-v="${n}" style="--sc:${sevColor(n)}">${n}</button>`).join('') +
-        '</div><div class="scale-ends"><span>slabé</span><span>neznesiteľné</span></div></div>';
-    }
-    return h;
+    if (d === todayStr() || !food.length) return '';
+    const miss = MEAL_SLOTS.filter(([, a, b]) => !food.some(e => {
+      const x = (e.ts - parseDay(d).getTime()) / 3600e3;
+      return x >= a && x < b;
+    }));
+    if (!miss.length || miss.length >= 3) return '';
+    return `<div class="card quick miss"><span>${miss.length === 1 ? 'Chýba ' + miss[0][0] + '?' : 'Chýbajú ' + miss.map(m => m[0]).join(' a ') + '?'}</span><div class="chips">` +
+      miss.map(([n, , , at]) => `<button type="button" class="chip" data-act="add-at" data-h="${at}">＋ ${n}</button>`).join('') + '</div></div>';
   }
 
   function quickFor(type) {

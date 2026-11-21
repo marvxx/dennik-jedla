@@ -567,7 +567,12 @@
   window.addEventListener('scroll', syncNavbar, { passive: true });
 
   // zapamätá, či je zoznam posledných jedál rozbalený (aj po prekreslení formulára)
-  document.addEventListener('toggle', ev => { if (ev.target.classList && ev.target.classList.contains('quick-dd')) draft.quickOpen = ev.target.open; }, true);
+  document.addEventListener('toggle', ev => {
+    const c = ev.target.classList;
+    if (!c) return;
+    if (c.contains('quick-dd')) draft.quickOpen = ev.target.open;
+    else if (c.contains('fdet')) draft.detOpen = ev.target.open;
+  }, true);
 
   $('#entry-form').addEventListener('submit', ev => { ev.preventDefault(); saveDraft(); });
 

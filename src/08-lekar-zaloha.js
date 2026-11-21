@@ -287,10 +287,6 @@
     const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
     const risk = TAGS.filter(([v]) => riskTags().includes(v)).map(x => x[2]);
     el.innerHTML = `<header class="lt"><div><h1>Nastavenia</h1></div><button type="button" class="help-q" data-act="help" data-sec="settings" aria-label="Pomocník">?</button></header>
-      <h2 class="sub">Pomoc</h2><div class="dayrows">
-        ${srow('help', 'q', 'accent', 'Pomocník', 'Čo znamená ktorá časť aplikácie')}
-        ${srow('welcome', 'phone', 'food', 'Úvod znova', 'Krátke predstavenie denníka')}
-      </div>
       <h2 class="sub">Vzhľad</h2>
       <div class="segbar theme-seg">${[['auto', 'Podľa telefónu'], ['light', 'Svetlý'], ['dark', 'Tmavý']].map(([k, l]) =>
         `<button type="button" class="${savedTheme() === k ? 'on' : ''}" data-theme-set="${k}">${l}</button>`).join('')}</div>
@@ -314,6 +310,10 @@
         ${standalone ? '' : srow('install', 'phone', 'med', 'Pridať na plochu', 'Aby sa denník otváral ako aplikácia')}
         ${srow('shortcut', 'open', 'accent', 'Skratky a Siri', 'Zápis jedným ťuknutím z plochy')}
         ${srow('wipe', 'trash', 'danger', 'Vymazať všetky údaje', entries.length + ' záznamov, ' + Object.keys(days).length + ' dní s údajmi', '', true)}
+      </div>
+      <h2 class="sub">Pomoc</h2><div class="dayrows">
+        ${srow('help', 'q', 'accent', 'Pomocník', 'Čo znamená ktorá časť aplikácie')}
+        ${srow('welcome', 'phone', 'food', 'Úvod znova', 'Krátke predstavenie denníka')}
       </div>
       <p class="foot" style="text-align:center">Denník jedla ${APP_VERSION} · funguje aj bez internetu</p>
       <p class="foot" style="text-align:center">Záznamy ostávajú len v telefóne. Pri skenovaní sa do databázy Open Food Facts pošle iba číslo čiarového kódu.</p>`;

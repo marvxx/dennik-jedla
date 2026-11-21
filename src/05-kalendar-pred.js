@@ -8,7 +8,8 @@
       if (e.place && e.place !== 'doma') p.push([lab(PLACES, e.place)]);
       if (e.portion && e.portion !== 'normalna') p.push([lab(PORTION, e.portion) + ' porcia']);
       const risk = riskTags();
-      Analysis.mealTags(e).forEach(t => { const x = TAGS.find(y => y[0] === t); if (x) p.push([x[2], risk.includes(t) ? 'risk' : '']); });
+      // ostatné skupiny sú vidno pri úprave záznamu; tu by len rušili
+      Analysis.mealTags(e).forEach(t => { const x = TAGS.find(y => y[0] === t); if (x && risk.includes(t)) p.push([x[2], 'risk']); });
       if (e.enzyme) p.push(['enzým']);
       if (e.amount) p.push([e.amount]);
       if (e.rushed) p.push(['v zhone']);

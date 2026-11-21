@@ -37,7 +37,8 @@
 
   async function load() {
     const [e, d, m] = await Promise.all([DB.all('entries'), DB.all('days'), DB.all('meta')]);
-    entries = e;
+    // záznam bez známeho typu (napr. z prerušeného uloženia) by zhodil vykreslenie
+    entries = e.filter(x => TYPES[x.type]);
     days = {};
     d.forEach(x => { days[x.date] = x; });
     meta = {};

@@ -17,7 +17,7 @@
     const g = (days[d] && days[d].glasses) || 0;
     const cups = list.filter(isCoffee).length;
     const drops = [...Array(Math.max(WATER_GOAL, g))].map((_, i) => `<i class="${i < g ? 'on' : ''}"></i>`).join('');
-    return `<div class="card quick drink">
+    return `<div class="drink">
       <div class="dr-row"><span class="dr-ico water">${ic('drop')}</span>
         <span class="dr-txt"><b>Voda</b><small>${g} ${g === 1 ? 'pohár' : g >= 2 && g <= 4 ? 'poháre' : 'pohárov'}${g < WATER_GOAL ? ' · cieľ ' + WATER_GOAL : ' ✓'}</small><span class="drops">${drops}</span></span>
         <button type="button" class="dr-btn minus" data-act="water" data-v="-1" data-date="${d}" aria-label="Ubrať pohár"${g ? '' : ' disabled'}>−</button>
