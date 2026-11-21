@@ -721,3 +721,78 @@ input[type="search"]:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 @media (prefers-contrast: more) and (prefers-color-scheme: dark) {
   :root { --line: #5f777b; --ink-2: #d3dfe0; --ink-3: #b0c0c2; }
 }
+
+/* ---------- 3.1: spojený verdikt v Súvislostiach ---------- */
+.hero { position: relative; overflow: hidden; }
+.hero::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--sev-mid); }
+.hero.v-strong::before { background: var(--sym); }
+.hero .eyebrow { margin: 0 0 4px; font-size: .7647rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.hero h2.res-name { margin: 0; font: 800 1.4118rem/1.15 var(--round); letter-spacing: -.01em; }
+.hero.v-strong .ratio { background: var(--sym-soft); color: var(--sym); }
+.hero.v-sus .ratio { background: var(--warn-soft); color: var(--warn); }
+.hero .res-foot { margin-top: 10px; }
+.hero-btns { display: flex; gap: 8px; margin-top: 12px; }
+.hero-btns .btn { flex: 1; }
+ul.why { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+ul.why li { position: relative; padding-left: 18px; font-size: .8824rem; line-height: 1.4; color: var(--ink-2); }
+ul.why li::before { content: ""; position: absolute; left: 2px; top: .5em; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); }
+.hero ul.why li::before, ul.why li.bad::before { background: var(--sym); }
+ul.why li.good::before { background: var(--food); }
+
+.sus-row { grid-template-columns: 12px 1fr auto 10px; }
+.sus-row .dot { background: var(--sev-mid); }
+.sus-row.v-strong .dot { background: var(--sym); }
+.sus-row small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sus-row .ratio { background: var(--warn-soft); color: var(--warn); }
+.sus-row.v-strong .ratio { background: var(--sym-soft); color: var(--sym); }
+
+.verdict { display: inline-block; margin: -4px 0 12px; padding: 4px 12px; border-radius: 999px; font-weight: 700; font-size: .8824rem; background: var(--warn-soft); color: var(--warn); }
+.verdict.v-strong { background: var(--sym-soft); color: var(--sym); }
+.verdict.v-none { background: var(--surface-2); color: var(--ink-2); }
+
+/* za koľko po jedle prišli ťažkosti */
+.delay { display: grid; grid-template-columns: 58px 1fr 40px; gap: 8px 10px; align-items: center; font-size: .7647rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.delay > span:last-child, .delay > span:nth-child(3n) { text-align: right; }
+.bar2 { position: relative; display: grid; gap: 3px; }
+.bar2 i { display: block; height: 8px; border-radius: 4px; min-width: 2px; }
+.bar2 i.m { background: var(--sym); }
+.bar2 i.o { background: var(--ink-3); opacity: .45; height: 5px; }
+i.key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; }
+i.key.m { background: var(--sym); } i.key.o { background: var(--ink-3); opacity: .45; }
+
+/* konkrétne jedlá */
+.evlist { display: grid; margin: 0 -14px -6px; }
+.ev {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; width: 100%; min-height: 56px;
+  padding: 8px 14px; border: 0; border-top: 1px solid var(--line); background: none; text-align: left;
+}
+.ev:first-child { border-top: 0; }
+.ev:active { background: var(--bg); }
+.ev-d { font-size: .7647rem; font-weight: 700; color: var(--ink-2); line-height: 1.25; }
+.ev-d small { display: block; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ev-t { font-size: .9412rem; font-weight: 600; min-width: 0; line-height: 1.3; word-break: break-word; }
+.ev-t small { display: block; margin-top: 2px; font-size: .7647rem; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ev-o { font-size: .7353rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.ev-o.hit { background: var(--sym-soft); color: var(--sym); }
+.ev-o.ok { background: var(--food-soft); color: var(--food); }
+.ev-o.wait { background: var(--surface-2); color: var(--ink-3); }
+
+/* zbalené podrobnosti */
+details.calc { margin: 4px 0 14px; }
+details.calc > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 48px; border-radius: var(--radius); background: var(--surface-2); font-weight: 700; color: var(--ink-2);
+}
+details.calc > summary::-webkit-details-marker { display: none; }
+details.calc > summary::after { content: "›"; font-size: 1.3rem; line-height: 1; transform: rotate(90deg); transition: transform .2s; }
+details.calc[open] > summary { margin-bottom: 14px; }
+details.calc[open] > summary::after { transform: rotate(-90deg); }
+details.more.pend { margin: 10px 0 0; }
+details.more.pend > summary { padding: 6px 0; font-size: .8824rem; color: var(--ink-2); }
+
+/* ---------- 3.1: kalendár a pásik dní – výraznejšie rozlíšenie ---------- */
+.c-ok { background: color-mix(in srgb, var(--food) 24%, var(--surface)) !important; color: var(--food) !important; }
+.c-none { background: var(--surface-2) !important; color: var(--ink-2) !important; box-shadow: inset 0 0 0 1.5px var(--line); }
+.cal-legend i.c-ok { box-shadow: none; }
+.ds i { width: 8px; height: 8px; }
+.ds.sel i { box-shadow: 0 0 0 1.5px var(--bg); }

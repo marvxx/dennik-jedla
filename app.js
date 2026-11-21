@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '3.0';
+  const APP_VERSION = '3.1';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -1411,10 +1411,152 @@
         <button type="button" class="pin" data-pin="${esc(name)}">Zapísať zistenie</button></div></div>`;
   }
 
+  // Položky s málo údajmi sú zbalené do jedného riadku, aby nezahlcovali výsledky
   function pendingList(list, minN, isFood) {
     if (!list.length) return '';
-    return `<p class="tiny" style="margin:12px 0 6px">Zatiaľ málo údajov (treba aspoň ${minN}×):</p><div class="pending">` +
-      list.slice(0, 20).map(p => `<span>${esc(isFood ? p.label : (CTX_LABELS[p.key] || p.key))} ${p.n}/${minN}</span>`).join('') + '</div>';
+    return `<details class="more pend"><summary>Zatiaľ málo údajov (${list.length})</summary>
+      <p class="tiny" style="margin:0 0 6px">Vyhodnotí sa, keď sa zje aspoň ${minN}×.</p><div class="pending">` +
+      list.slice(0, 20).map(p => `<span>${esc(isFood ? p.label : (CTX_LABELS[p.key] || p.key))} ${p.n}/${minN}</span>`).join('') + '</div></details>';
+  }
+
+  // ---------- Spojený verdikt: všetky pohľady na jedno podozrivé ----------
+  // Rovnakú vec (napr. mliečne) hodnotí viac výpočtov: po jedle, dávka za deň, na druhý deň,
+  // hromadenie, najhoršie dni. Tu sa spoja do jedného verdiktu, aby si výsledky neodporovali.
+  const SIG_W = { meal: 1, load: 1, late: 0.8, stack: 0.7, day: 0.9 };
+  let lastSus = new Map();
+
+  function buildSuspects(r, r2, bw) {
+    const S = new Map();
+    const add = (id, name, x, kind) => {
+      let s = S.get(id);
+      if (!s) { s = { id, name, sig: [], score: 0, bad: 0 }; S.set(id, s); }
+      s.sig.push({ kind, x });
+    };
+    const ctxName = k => CTX_LABELS[k] || k;
+    r.foods.forEach(x => add(x.key, x.label, x, 'meal'));
+    r.ctx.forEach(x => add(x.key, x.key.startsWith('tag:') ? tagLabel(x.label) : ctxName(x.key), x, 'meal'));
+    (r.loads || []).forEach(x => add('tag:' + x.label, tagLabel(x.label), x, 'load'));
+    (r.stacking || []).forEach(x => add('tag:' + x.label, tagLabel(x.label), x, 'stack'));
+    r.days.forEach(x => add(x.key, ctxName(x.key), x, 'day'));
+    if (r2) {
+      r2.foods.forEach(x => add(x.key, x.label, x, 'late'));
+      r2.ctx.filter(x => x.key.startsWith('tag:')).forEach(x => add(x.key, tagLabel(x.label), x, 'late'));
+    }
+    const bwId = k => k.startsWith('w:') ? k.slice(2) : k;
+    const bwName = x => x.key.startsWith('tag:') ? tagLabel(x.label) : x.label;
+    if (bw) {
+      bw.onlyWorst.forEach(x => add(bwId(x.key), bwName(x), { n: x.n, of: bw.worst.length }, 'worst'));
+      bw.onlyBest.forEach(x => add(bwId(x.key), bwName(x), { n: x.n, of: bw.best.length }, 'best'));
+      bw.both.forEach(x => add(bwId(x.key), bwName(x), { n: x.n }, 'both'));
+    }
+    for (const s of S.values()) {
+      for (const g of s.sig) {
+        if (!SIG_W[g.kind] || g.x.level === 'none') continue;
+        s.score += (g.x.level === 'high' ? 2 : 1) * conf(g.x) * SIG_W[g.kind];
+        s.bad++;
+      }
+      // najhoršie dni samy nič nedokazujú, len podporia iný výsledok
+      if (s.bad && s.sig.some(g => g.kind === 'worst')) s.score += 0.5;
+      s.verdict = s.score >= 4 || s.bad >= 2 ? 'strong' : s.score >= 1 ? 'sus' : 'none';
+      // najsilnejší výpočet určuje číslo, ktoré sa ukáže pri názve
+      s.top = s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').sort((a, b) => b.x.ratio - a.x.ratio)[0] || null;
+    }
+    lastSus = S;
+    return [...S.values()].filter(s => s.verdict !== 'none').sort((a, b) => b.score - a.score);
+  }
+
+  const hasBad = (s, kind) => s.sig.some(g => g.kind === kind && g.x.level !== 'none');
+  const hasKind = (s, kind) => s.sig.find(g => g.kind === kind);
+
+  // Jedna veta ku každému výpočtu, ľudskou rečou
+  function sigSentence(g, s) {
+    const x = g.x, w = `${x.withHit} z ${x.withN}`, o = x.outN ? pct(x.rateWithout) : '';
+    switch (g.kind) {
+      case 'meal':
+        if (!s.id.includes(':') || s.id.startsWith('tag:')) {
+          return x.level === 'none'
+            ? (hasBad(s, 'load') ? 'Po jednom jedle sa to neprejaví. Vadí až väčšie množstvo za deň.' : `Po jednotlivých jedlách súvis nevidno (${w}).`)
+            : `Po ${w} takých jedál prišli do ${(lastR && lastR.opts.toH) || 6} h ťažkosti. Po ostatných jedlách v ${o} prípadov.`;
+        }
+        return `Po ${w} takých jedál prišli ťažkosti. Po ostatných v ${o} prípadov.`;
+      case 'load': return x.level === 'none' ? `Ani pri 2 a viac porciách za deň sa ťažkosti nezvyšujú (${w} dní).`
+        : `V dni s 2 a viac porciami boli ťažkosti ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
+      case 'late': return `Na druhý deň (12–48 h) prišli ťažkosti po ${w} takých jedál. Inak v ${o} prípadov.`;
+      case 'stack': return `Keď sa to za 12 h zjedlo 2× a viac, prišli ťažkosti po ${w} jedál. Pri 1× v ${o} prípadov.`;
+      case 'day': return `V takéto dni boli ťažkosti ${w} dní. V ostatné dni ${x.outHit} z ${x.outN}.`;
+      case 'worst': return `Bolo v ${x.n} z ${x.of} najhorších dní a v žiadnom z najlepších.`;
+      case 'best': return `Bolo v ${x.n} z ${x.of} najlepších dní a v žiadnom z najhorších.`;
+      case 'both': return doseOnly(s) ? 'Bolo aj v dobrých dňoch. Rozhoduje teda skôr množstvo než samotná surovina.' : 'Bolo v najlepších aj najhorších dňoch.';
+    }
+    return '';
+  }
+  // vadí len väčšie množstvo za deň, jedno jedlo samo nie
+  const doseOnly = s => hasBad(s, 'load') && !hasBad(s, 'meal');
+  const VERDICT_TXT = { strong: 'Silné podozrenie', sus: 'Podozrenie', none: 'Bez jasného súvisu' };
+  const susConf = s => Math.max(1, ...s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').map(g => conf(g.x)));
+  const susRatio = s => s.top ? ratioText(s.top.x) : '';
+
+  // Hlavné podozrenie navrchu Súvislostí
+  function heroHtml(s) {
+    const lines = s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').sort((a, b) => b.x.ratio - a.x.ratio)
+      .concat(s.sig.filter(g => (g.kind === 'meal' && g.x.level === 'none' && doseOnly(s)) || g.kind === 'worst' || (g.kind === 'both' && doseOnly(s))))
+      .slice(0, 3);
+    const c = susConf(s);
+    const testable = s.id.startsWith('tag:') || !s.id.includes(':');
+    return `<div class="card hero v-${s.verdict}"><p class="eyebrow">Hlavné podozrenie</p>
+      <div class="res-top"><h2 class="res-name">${esc(s.name)}</h2><span class="ratio">${susRatio(s)}</span></div>
+      <ul class="why">${lines.map(g => `<li>${sigSentence(g, s)}</li>`).join('')}</ul>
+      <div class="res-foot"><span class="conf c${c}"><i></i><i></i><i></i>${CONF_TXT[c]}</span></div>
+      <div class="hero-btns"><button type="button" class="btn small" data-sus="${esc(s.id)}">Podrobnosti</button>
+        ${testable ? `<button type="button" class="btn small primary" data-act="test-for" data-sus-id="${esc(s.id)}">Vyskúšať bez toho</button>` : ''}</div></div>`;
+  }
+  // Ďalšie podozrenia ako krátky zoznam; detail sa otvorí ťuknutím
+  function susRowsHtml(list) {
+    return '<div class="dayrows flat">' + list.map(s => {
+      const g = s.top;
+      return `<button type="button" class="dayrow sus-row v-${s.verdict}" data-sus="${esc(s.id)}"><span class="dot"></span>
+        <span><b>${esc(s.name)}</b><small>${g ? sigSentence(g, s) : ''}</small></span><span class="ratio">${susRatio(s)}</span><span class="chev">›</span></button>`;
+    }).join('') + '</div>';
+  }
+
+  // Detail podozrivého: všetky výpočty, kedy prichádzajú ťažkosti a konkrétne jedlá
+  function openSuspect(id) {
+    const s = lastSus.get(id);
+    if (!s) return;
+    const ev = Analysis.evidence(entries, days, id, Date.now());
+    const testable = s.id.startsWith('tag:') || !s.id.includes(':');
+    const order = ['meal', 'load', 'late', 'stack', 'day', 'worst', 'best', 'both'];
+    const sigs = s.sig.slice().sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+    let h = `<div class="sheet-head"><h2>${esc(s.name)}</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>
+      <p class="verdict v-${s.verdict}">${VERDICT_TXT[s.verdict]}${s.top ? ' · ' + susRatio(s) : ''}</p>`;
+    h += grp('Čo ukazujú údaje', '<ul class="why">' + sigs.map(g => `<li class="${SIG_W[g.kind] && g.x.level !== 'none' ? 'bad' : g.kind === 'best' ? 'good' : ''}">${sigSentence(g, s)}</li>`).join('') + '</ul>');
+    if (ev && ev.mine.n >= 3) {
+      const lab = ['do 1 h', '1–2 h', '2–4 h', '4–8 h', '8–24 h'];
+      const rows = ev.buckets.map((_, i) => `<span>${lab[i]}</span>
+        <div class="bar2"><i class="m" style="width:${Math.round(ev.mine.b[i] * 100)}%"></i><i class="o" style="width:${Math.round(ev.rest.b[i] * 100)}%"></i></div>
+        <span>${pct(ev.mine.b[i])}</span>`).join('');
+      h += grp('Za koľko po jedle prišli ťažkosti', `<div class="delay">${rows}</div>
+        <p class="tiny" style="margin:10px 0 0"><i class="key m"></i> po tomto jedle (${ev.mine.n}×) &nbsp; <i class="key o"></i> po ostatných jedlách</p>
+        ${ev.peak >= 0 ? `<p class="small" style="margin:8px 0 0">Najčastejšie <b>${lab[ev.peak]}</b> po jedle, častejšie ako po iných jedlách.</p>` : ''}
+        <p class="tiny" style="margin:6px 0 0">Bez ťažkostí do 24 h: ${pct(ev.mine.none)} takých jedál, inak ${pct(ev.rest.none)}.</p>`);
+    }
+    if (ev && ev.list.length) {
+      h += grp('Kedy si to jedla', '<div class="evlist">' + ev.list.slice(0, 15).map(x => {
+        // ťažkosti v sledovanom okne sú červené, neskoršie len sivé
+        const win = (lastR && lastR.opts.toH) || 6;
+        const after = d => 'o ' + (d < 1 ? Math.max(1, Math.round(d * 60)) + ' min' : Math.round(d) + ' h');
+        const out = !x.ripe && x.delay == null ? ['wait', 'čaká sa'] : x.delay != null && x.delay < 24
+          ? [x.delay <= win ? 'hit' : 'wait', 'ťažkosti ' + after(x.delay) + (x.sev ? ' · ' + x.sev + '/10' : '')]
+          : x.known ? ['ok', 'bez ťažkostí'] : ['wait', 'deň nezapísaný'];
+        return `<button type="button" class="ev" data-goday="${dateStr(x.ts)}"><span class="ev-t">${esc(x.desc)}<small>${fmtDayHead(dateStr(x.ts))} · ${fmtTime(x.ts)}</small></span>
+          <span class="ev-o ${out[0]}">${out[1]}</span></button>`;
+      }).join('') + '</div>' + (ev.list.length > 15 ? `<p class="tiny" style="margin:8px 0 0">a ďalších ${ev.list.length - 15} starších</p>` : ''));
+    }
+    h += `<p class="tiny" style="margin:0 4px 12px">Čísla ukazujú, čo sa časovo zhoduje. Istotu dá až test: na čas vynechať a sledovať, či je lepšie.</p>
+      <div class="savebar"><button type="button" class="btn" data-pin="${esc(s.name)}">Zapísať zistenie</button>
+      ${testable ? `<button type="button" class="btn primary" data-act="test-for" data-sus-id="${esc(s.id)}">Vyskúšať bez toho</button>` : ''}</div>`;
+    $('#mini-sheet').innerHTML = h;
+    openSheet('mini-sheet');
   }
 
   // Podozrivé ukáže hneď, ostatné schová do rozbaľovacieho zoznamu
@@ -1520,11 +1662,13 @@
         <button type="button" class="btn small ghost" data-act="test-cancel">Zrušiť test</button></div></div>`;
   }
 
-  function openTestNew() {
-    tDraft = { tag: null, days: 14 };
+  // pre = predvyplnené z podozrivého: { tag } alebo { text }
+  function openTestNew(pre) {
+    pre = pre || {};
+    tDraft = { tag: pre.tag || null, days: 14 };
     $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Nový test</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
-      grp('Čo na čas vynecháš?', '<div class="chips">' + TAGS.map(([v, e, t]) => `<button type="button" class="chip" data-tt="${v}">${esc(t)}</button>`).join('') + '</div>' +
-        '<input type="text" id="tt-text" style="margin-top:10px" placeholder="alebo napíš vlastné, napr. paradajky" enterkeyhint="done">') +
+      grp('Čo na čas vynecháš?', '<div class="chips">' + TAGS.map(([v, e, t]) => `<button type="button" class="chip${v === tDraft.tag ? ' on' : ''}" data-tt="${v}">${esc(t)}</button>`).join('') + '</div>' +
+        `<input type="text" id="tt-text" style="margin-top:10px" value="${esc(pre.text || '')}" placeholder="alebo napíš vlastné, napr. paradajky" enterkeyhint="done">`) +
       grp('Ako dlho?', '<div class="chips seg">' + [7, 14, 21].map(n => `<button type="button" class="chip${n === 14 ? ' on' : ''}" data-td="${n}">${n} dní</button>`).join('') + '</div>') +
       '<p class="tiny" style="margin:0 4px 12px">Väčšie zmeny v strave a lieky vždy najprv preber s lekárom.</p>' +
       `<div class="savebar"><button type="button" class="btn primary" data-act="test-start">Začať dnes</button></div>`;
@@ -1541,10 +1685,24 @@
       <p class="tiny" style="margin:0 0 10px">Najhoršie: ${bw.worst.map(x => fmtDayHead(x.date) + ' (' + x.sev + '/10)').join(', ')}.<br>Najlepšie: ${bw.best.map(fmtDayHead).join(', ')}.</p>
       <h4 class="mini-h">Jedlo sa len v najhorších dňoch</h4>${chips(bw.onlyWorst, 'risk')}
       <h4 class="mini-h">Jedlo sa len v najlepších dňoch</h4>${chips(bw.onlyBest, 'good')}
-      ${bw.both.length ? `<h4 class="mini-h">Bolo v oboch, takže asi nerozhoduje</h4>${chips(bw.both, '')}` : ''}</div>`;
+      ${bothHtml(bw.both, chips)}</div>`;
+  }
+  // Čo bolo v najlepších aj najhorších dňoch: ak je to podozrivé z inej strany (napr. dávka za deň),
+  // netvrdíme, že to nerozhoduje
+  function bothHtml(both, chips) {
+    if (!both.length) return '';
+    const id = x => x.key.startsWith('w:') ? x.key.slice(2) : x.key;
+    const susOf = x => { const s = lastSus.get(id(x)); return s && s.verdict !== 'none' ? s : null; };
+    const dose = both.filter(x => susOf(x) && doseOnly(susOf(x)));
+    const other = both.filter(x => susOf(x) && !dose.includes(x));
+    const plain = both.filter(x => !susOf(x));
+    return (dose.length ? `<h4 class="mini-h">Bolo v oboch, ale záleží asi na množstve</h4>${chips(dose, 'risk')}` : '') +
+      (other.length ? `<h4 class="mini-h">Bolo v oboch, no po jedle vyzerá podozrivo</h4>${chips(other, 'risk')}` : '') +
+      (plain.length ? `<h4 class="mini-h">Bolo v oboch, takže asi nerozhoduje</h4>${chips(plain, '')}` : '');
   }
 
   let insTab = 'sus';
+  let lastR = null;
   const INS_TABS = [['sus', 'Podozrivé'], ['good', 'Dobré'], ['days', 'Dni'], ['mine', 'Moje']];
 
   function renderInsights() {
@@ -1586,18 +1744,25 @@
       return;
     }
 
-    const tol = toleratedList(r);
+    lastR = r;
+    const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
+    const bw = Analysis.bestWorst ? Analysis.bestWorst(entries, days) : null;
+    const sus = buildSuspects(r, r2 && r2.totalN >= 10 ? r2 : null, bw);
+    // čo je podozrivé z iného pohľadu (napr. dávka za deň), nepatrí medzi dobre znášané
+    const tol = toleratedList(r).filter(x => !sus.some(s => s.id === x.key));
     if (insTab === 'sus') {
-      const top = r.foods.concat(r.ctx).filter(x => x.level !== 'none').sort((a, b) => b.ratio - a.ratio || b.rateWith - a.rateWith).slice(0, 3);
-      h += `<div class="card brief"><h2>V skratke</h2>
-        <h4 class="mini-h" style="margin-top:0">Najčastejšie pred ťažkosťami</h4>` +
-        (top.length ? top.map(x => `<div class="brow lvl-${x.level}"><span>${esc(resName(x))}</span><span class="ratio">${ratioText(x)}</span></div>`).join('')
-          : '<p class="small muted" style="margin:0">Zatiaľ nič nevyzerá podozrivo.</p>') +
-        `<h4 class="mini-h">Najlepšie znášané</h4>` +
-        (tol.length ? '<div class="pending">' + tol.slice(0, 3).map(x => `<span class="good">${esc(resName(x))}</span>`).join('') + '</div>'
-          : '<p class="small muted" style="margin:0">Zatiaľ málo údajov.</p>') +
+      const hero = sus[0] && sus[0].score >= 2 ? sus[0] : null;
+      const others = sus.filter(s => s !== hero).slice(0, 8);
+      h += hero ? heroHtml(hero) : `<div class="card"><h2>V skratke</h2><p class="small muted" style="margin:0">Zatiaľ nič nevyzerá výrazne podozrivo.
+        Zapisuj ďalej, najmä aj dni bez ťažkostí.</p></div>`;
+      if (others.length) h += `<div class="card"><h2>${hero ? 'Ďalšie podozrenia' : 'Možné podozrenia'}</h2>${susRowsHtml(others)}</div>`;
+      h += `<div class="card"><h2>Najlepšie znášané</h2>` + (tol.length
+        ? '<div class="pending">' + tol.slice(0, 6).map(x => `<span class="good">${esc(resName(x))}</span>`).join('') + '</div>'
+        : '<p class="small muted" style="margin:0">Zatiaľ málo údajov.</p>') +
         `<p class="tiny" style="margin:12px 0 0">Z ${r.totalN} jedál a ${r.symptomCount} záznamov ťažkostí. Ťažkosti prišli po ${pct(r.baseRate)} jedál.</p></div>`;
 
+      // pôvodné podrobné výpočty ostávajú, ale zbalené
+      h += `<details class="calc"><summary>Všetky výpočty</summary>`;
       h += `<div class="card"><h2>Jedlá a suroviny</h2>`;
       h += resList(r.foods, 'meal', `Zatiaľ žiadna surovina nemá ${minN} výskytov.`);
       h += pendingList(r.foodsPending, minN, true) + '</div>';
@@ -1626,13 +1791,13 @@
         h += '</div>';
       }
 
-      const r2 = toH < 12 ? Analysis.analyze(entries, days, { fromH: 12, toH: 48, minN, riskTags: riskTags() }) : null;
       if (r2 && r2.totalN >= 10) {
         const late = r2.foods.concat(r2.ctx.filter(x => x.key.startsWith('tag:'))).filter(x => x.level !== 'none').sort((a, b) => b.ratio - a.ratio || b.rateWith - a.rateWith);
         h += `<div class="card"><h2>Na druhý deň (12–48 h)</h2><p class="tiny" style="margin:0 0 6px">Niektoré intolerancie sa prejavia až neskôr. Tu sú jedlá, po ktorých prišli ťažkosti o 12–48 h.</p>`;
         h += late.length ? late.slice(0, 15).map(x => resItem(x, 'meal')).join('') : '<p class="muted small" style="margin:4px 0">Nič výrazné.</p>';
         h += '</div>';
       }
+      h += '</details>';
       if (r.skipped) h += `<p class="foot">${r.skipped} jedál nie je zarátaných, lebo v ten deň nie sú zapísané ťažkosti ani „Deň bez ťažkostí“.</p>`;
     }
 
@@ -2015,6 +2180,13 @@
     const ins = t.closest('[data-ins]');
     if (ins) { insTab = ins.dataset.ins; renderInsights(); return; }
 
+    const su = t.closest('[data-sus]');
+    if (su) { openSuspect(su.dataset.sus); return; }
+
+    // z detailu podozrivého na konkrétny deň
+    const gd = t.closest('[data-goday]');
+    if (gd) { [...openSheets].reverse().forEach(id => closeSheet(id)); todayExpanded = false; goDay(gd.dataset.goday); return; }
+
     const pin = t.closest('[data-pin]');
     if (pin) { openFinding({ text: pin.dataset.pin.replace(/^[^\p{L}\p{N}]+/u, ''), status: 'sus' }); return; }
 
@@ -2184,6 +2356,13 @@
         break;
       }
       case 'test-new': openTestNew(); break;
+      case 'test-for': {
+        const s = lastSus.get(act.dataset.susId);
+        if (!s) break;
+        if (meta.test) { toast('Už prebieha test. Naraz len jedna vec.'); break; }
+        openTestNew(s.id.startsWith('tag:') ? { tag: s.id.slice(4) } : { text: s.name });
+        break;
+      }
       case 'test-start': {
         const txt = $('#tt-text').value.trim();
         const tg = TAGS.find(x => x[0] === tDraft.tag);

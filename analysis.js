@@ -43,6 +43,53 @@
     return [...out.entries()];
   }
 
+  // Základné tvary bežných potravín, aby výsledok nebol „mliekom“, ale „mlieko“.
+  // Prvé slovo v skupine je základný tvar, ďalšie sú tvary, ktoré sa skracujú inak.
+  const BASE = {};
+  ('mlieko maslo syr tvaroh jogurt smotana bryndza kefír zmrzlina puding chlieb|chleba|chlebom rožok|rožky pečivo|pečivom ' +
+    'cestoviny|cestovinami špagety ryža|ryžou zemiaky|zemiakmi|zemiakov hranolky knedľa|knedle|knedľou halušky kaša|kašou ' +
+    'vločky|vločkami müsli mäso|mäsom kura|kuraťom bravčové hovädzie morčacie šunka|šunkou saláma|salámou klobása|klobásou ' +
+    'slanina|slaninou párky|párkom ryba|rybou losos|lososom tuniak|tuniakom vajce|vajcia|vajcom|vajíčko|vajíčka|vajíčkom ' +
+    'zelenina|zeleninou šalát|šalátom paradajky|paradajka|paradajkou paprika|paprikou uhorka|uhorkou mrkva|mrkvou ' +
+    'cibuľa|cibuľou cesnak|cesnakom brokolica|brokolicou kapusta|kapustou špenát|špenátom fazuľa|fazuľou šošovica|šošovicou ' +
+    'hrach|hrachom cícer|cícerom ovocie|ovocím jablko|jablká|jablkom banán|banánom hruška|hruškou pomaranč jahody|jahodami ' +
+    'hrozno|hrozienka med|medom cukor|cukrom čokoláda|čokoládou koláč|koláče|koláčom keksy|keks sušienky orechy|oriešky|orieškami ' +
+    'káva|kávou čaj|čajom voda|vodou džús|džúsom pivo víno|vínom polievka|polievkou omáčka|omáčkou pizza avokádo ' +
+    'kakao|kakaom tofu hummus palacinky|palacinka toast|toastom sendvič|sendviču burger')
+    .split(' ').forEach(grp => {
+      const forms = grp.split('|');
+      forms.forEach(f => { const k = stem(norm(f)); if (!BASE[k]) BASE[k] = forms[0]; });
+    });
+  const PREPS = new Set(['s', 'so', 'z', 'zo', 'na', 'v', 'vo', 'bez', 'do', 'k', 'ku', 'po', 'pre', 'pri', 'od', 'za']);
+
+  // Slová popisu v poradí; k = kľúč plnovýznamového slova, prep = predložka pred ním
+  function words(desc) {
+    const out = [];
+    let prev = '';
+    for (const w of String(desc || '').toLowerCase().split(/[^\p{L}]+/u)) {
+      if (!w) continue;
+      const n = norm(w);
+      out.push({ w, k: n.length >= 3 && !STOP.has(n) ? stem(n) : null, prep: PREPS.has(prev) ? prev : '' });
+      prev = n;
+    }
+    return out;
+  }
+  // Názov pre jedno slovo: základný tvar, inak tvar bez predložky, inak s predložkou („s maslom“)
+  function pickLabel(k, labels) {
+    if (BASE[k]) return BASE[k];
+    const arr = [...labels.entries()].sort((a, b) => b[1] - a[1]);
+    const free = arr.find(([l]) => !l.includes(' '));
+    return (free || arr[0])[0];
+  }
+  // Slová, ktoré idú vždy spolu, ukáže ako súvislú frázu z popisu („ovsená kaša“, „káva s mliekom“)
+  function phraseFor(desc, keys) {
+    const ws = words(desc), idx = [];
+    ws.forEach((x, i) => { if (x.k && keys.has(x.k)) idx.push(i); });
+    if (idx.length < 2 || idx.length !== keys.size) return null;
+    for (let i = idx[0]; i <= idx[idx.length - 1]; i++) if (!idx.includes(i) && ws[i].k) return null;
+    return ws.slice(idx[0], idx[idx.length - 1] + 1).map(x => x.w).join(' ');
+  }
+
   // Slovník na automatické rozpoznanie skupín potravín z popisu.
   // Kľúč = začiatok slova bez diakritiky; '=' na začiatku = presná zhoda celého slova.
   const TAG_WORDS = {
@@ -198,7 +245,12 @@
       const risk = riskTags ? tags.some(t => riskTags.includes(t)) : false;
       totalN++;
       if (hit) totalHit++;
-      for (const [k, w] of tokenize(m.desc)) bump(foodStats, k, w, hit);
+      const seenK = new Set();
+      for (const x of words(m.desc)) {
+        if (!x.k || seenK.has(x.k)) continue;
+        seenK.add(x.k);
+        bump(foodStats, x.k, x.prep ? x.prep + ' ' + x.w : x.w, hit);
+      }
       for (const t of tags) bump(ctxStats, 'tag:' + t, t, hit);
       if (risk) bump(ctxStats, 'risk', 'risk', hit);
       if (m.place && m.place !== 'doma') bump(ctxStats, 'place:' + m.place, m.place, hit);
@@ -218,7 +270,7 @@
 
     const topOf = m => [...m.entries()].sort((a, b) => b[1] - a[1])[0];
     function finish(map, group, dropSigs) {
-      let items = [...map].map(([k, st]) => ({ k, st, sig: st.idx.join(','), label: topOf(st.labels)[0] }));
+      let items = [...map].map(([k, st]) => ({ k, st, sig: st.idx.join(','), label: group === 'food' ? pickLabel(k, st.labels) : topOf(st.labels)[0] }));
       if (group === 'food') {
         // Slová, ktoré sa vyskytli presne v tých istých jedlách, sú jeden výsledok (napr. „káva s mliekom“)
         const bySig = new Map();
@@ -229,7 +281,8 @@
           st.idx.forEach(i => { const d = String(info[i].m.desc || '').trim().toLowerCase(); dm.set(d, (dm.get(d) || 0) + 1); });
           const [d0, n0] = topOf(dm);
           const whole = n0 / st.idx.length >= 0.6 && d0.split(/\s+/).length <= 5 && tokenize(d0).length === g.length;
-          return { k: g.map(it => it.k).join('+'), st, sig: g[0].sig, label: whole ? d0 : g.map(it => it.label).join(' + ') };
+          const phrase = !whole && g.length > 1 ? phraseFor(d0, new Set(g.map(it => it.k))) : null;
+          return { k: g.map(it => it.k).join('+'), st, sig: g[0].sig, label: whole ? d0 : phrase || g.map(it => it.label).join(' + ') };
         });
       } else if (dropSigs) {
         // skupina, ktorá je to isté ako jedno jedlo, sa neukazuje druhýkrát
@@ -371,7 +424,7 @@
         const seen = new Map();
         for (const e of foods[d]) {
           for (const t of mealTags(e)) seen.set('tag:' + t, t);
-          for (const [k, w] of tokenize(e.desc)) seen.set('w:' + k, w);
+          for (const [k, w] of tokenize(e.desc)) seen.set('w:' + k, BASE[k] || w);
         }
         for (const [k, l] of seen) { const r = m.get(k) || { key: k, label: l, n: 0 }; r.n++; m.set(k, r); }
       }
@@ -383,7 +436,58 @@
     return { worst: worst.map(d => ({ date: d, sev: sev[d] })), best, onlyWorst: only(W, B), onlyBest: only(B, W), both };
   }
 
-  const api = { analyze, bestWorst, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags };
+  // Ktoré jedlá patria k výsledku: skupina (tag:/load:/stack:) alebo slová jedla („mliek“, „ovsen+kas“)
+  function matcher(key) {
+    const m = /^(tag|load|stack):(.+)$/.exec(key);
+    if (m) return e => mealTags(e).includes(m[2]);
+    if (key.includes(':')) return null;   // okolnosti (zhon, pauza…) nemajú vlastné jedlá
+    const ks = key.split('+');
+    return e => { const t = new Set(tokenize(e.desc).map(x => x[0])); return ks.every(x => t.has(x)); };
+  }
+
+  // Dôkazy k jednému výsledku: kedy po jedle prišli ťažkosti a zoznam konkrétnych jedál
+  const DELAY_BUCKETS = [[0, 1], [1, 2], [2, 4], [4, 8], [8, 24]];
+  function evidence(entries, days, key, now) {
+    now = now || Date.now();
+    days = days || {};
+    const test = matcher(key);
+    if (!test) return null;
+    const sym = entries.filter(e => e.type === 'symptom').sort((a, b) => a.ts - b.ts);
+    const symDays = new Set(sym.map(e => localDate(e.ts)));
+    const usesNoSym = Object.values(days).some(v => v && v.noSymptoms);
+    const known = d => !usesNoSym || symDays.has(d) || !!(days[d] && days[d].noSymptoms);
+    const firstAfter = ts => {
+      let lo = 0, hi = sym.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (sym[m].ts < ts) lo = m + 1; else hi = m; }
+      return lo < sym.length && sym[lo].ts - ts <= 48 * HOUR ? sym[lo] : null;
+    };
+    const blank = () => ({ n: 0, b: DELAY_BUCKETS.map(() => 0), none: 0 });
+    const mine = blank(), rest = blank();
+    const list = [];
+    for (const e of entries) {
+      if (e.type !== 'food') continue;
+      const match = test(e);
+      const s = firstAfter(e.ts);
+      const delay = s ? (s.ts - e.ts) / HOUR : null;
+      const ripe = e.ts + 24 * HOUR <= now;
+      const ok = ripe && known(localDate(e.ts));
+      if (match) list.push({ ts: e.ts, id: e.id, desc: e.desc, delay, sev: s ? s.severity || null : null, ripe, known: known(localDate(e.ts)) });
+      if (!ok) continue;
+      const h = match ? mine : rest;
+      h.n++;
+      const i = delay == null ? -1 : DELAY_BUCKETS.findIndex(([a, b]) => delay >= a && delay < b);
+      if (i < 0) h.none++; else h.b[i]++;
+    }
+    list.sort((a, b) => b.ts - a.ts);
+    const share = h => ({ n: h.n, b: h.b.map(x => h.n ? x / h.n : 0), none: h.n ? h.none / h.n : 0 });
+    const M = share(mine), R = share(rest);
+    // vrchol: časové okno, kde je po tomto jedle najviac ťažkostí navyše oproti ostatným
+    let peak = -1, best = 0;
+    M.b.forEach((x, i) => { const d = x - R.b[i]; if (mine.b[i] >= 2 && d > best + 1e-9) { best = d; peak = i; } });
+    return { buckets: DELAY_BUCKETS, mine: M, rest: R, peak, list };
+  }
+
+  const api = { analyze, bestWorst, evidence, matcher, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);
