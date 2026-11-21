@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '2.8';
+  const APP_VERSION = '3.0';
 
   // Vlastné čiarové ikony (namiesto emoji)
   const IC = {
@@ -111,13 +111,123 @@
     return 'pred ' + n + ' dňami';
   }
 
+  // Oznam dole; s akciou (napr. „Späť“) ostane dlhšie a dá sa naň ťuknúť
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, action) {
     const t = $('#toast');
-    t.textContent = msg;
+    t.textContent = '';
+    const s = document.createElement('span');
+    s.textContent = msg;
+    t.appendChild(s);
+    t.classList.toggle('has-act', !!action);
+    if (action) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'toast-act';
+      b.textContent = action.label || 'Späť';
+      b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        clearTimeout(toastTimer);
+        t.classList.remove('show');
+        action.run();
+      });
+      t.appendChild(b);
+    }
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+    toastTimer = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2200);
+  }
+
+  // Krátka vibrácia len pri dôležitých chvíľach (iPhone v Safari ju nepodporuje, nič sa nestane)
+  function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms || 10); } catch (_) { /* nič */ } }
+
+  // ---------- Pohyb: pružiny ako v iOS ----------
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  // damping 1 = bez prekmitu, < 1 = jemne pruží; response = ako rýchlo dorazí (s)
+  const SPRING_OPEN = { damping: 1, response: 0.38 };
+  const SPRING_BACK = { damping: 0.85, response: 0.32 };   // po pustení prsta: trochu pruží
+  const SPRING_CLOSE = { damping: 1, response: 0.3 };
+
+  // Pružina vždy začína z aktuálnej polohy a rýchlosti, takže sa dá kedykoľvek prerušiť
+  function spring(st, target, cfg, onFrame, onRest) {
+    const k = Math.pow(2 * Math.PI / cfg.response, 2), c = 4 * Math.PI * cfg.damping / cfg.response;
+    cancelAnimationFrame(st.raf);
+    let last = performance.now();
+    const step = now => {
+      const dt = Math.min(0.032, Math.max(0, (now - last) / 1000));
+      last = now;
+      const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
+      for (let i = 0; i < n; i++) {
+        st.v += (-k * (st.x - target) - c * st.v) * h;
+        st.x += st.v * h;
+      }
+      if (Math.abs(st.v) < 4 && Math.abs(st.x - target) < 0.5) {
+        st.x = target; st.v = 0; st.raf = 0;
+        onFrame();
+        if (onRest) onRest();
+        return;
+      }
+      onFrame();
+      st.raf = requestAnimationFrame(step);
+    };
+    st.raf = requestAnimationFrame(step);
+  }
+  // Pri obmedzenom pohybe: len prelínanie priehľadnosti
+  function fadeTo(st, target, ms, onFrame, onRest) {
+    cancelAnimationFrame(st.raf);
+    const from = st.o, t0 = performance.now();
+    const step = now => {
+      const p = Math.min(1, (now - t0) / ms);
+      st.o = from + (target - from) * p;
+      onFrame();
+      if (p < 1) st.raf = requestAnimationFrame(step);
+      else { st.raf = 0; if (onRest) onRest(); }
+    };
+    st.raf = requestAnimationFrame(step);
+  }
+  // Za okrajom ide prvok za prstom čoraz menej (ako guma)
+  const rubberband = (over, dim) => (over * dim * 0.55) / (dim + 0.55 * Math.abs(over));
+  // Kam by prvok dobehol po švihnutí (rýchlosť v px/s)
+  const project = v => (v / 1000) * 0.998 / (1 - 0.998);
+
+  // Stav panelov: x = posun nadol v px (0 = otvorený), v = rýchlosť, o = priehľadnosť
+  const SM = {};
+  const sheetSt = id => SM[id] || (SM[id] = { x: 0, v: 0, o: 1, raf: 0, vis: false });
+  const sheetH = el => el.offsetHeight + 24;
+  function paintSheet(el, st) {
+    el.style.transform = `translate3d(0, ${st.x.toFixed(2)}px, 0)`;
+    el.style.opacity = st.o < 1 ? st.o.toFixed(3) : '';
+    st.level = st.vis ? st.o * Math.max(0, Math.min(1, 1 - st.x / sheetH(el))) : 0;
+    const lv = Math.max(0, ...Object.values(SM).map(s => s.level || 0));
+    $('#scrim').style.opacity = lv.toFixed(3);
+  }
+  function moveSheet(id, open, v, cfg) {
+    const el = document.getElementById(id), st = sheetSt(id);
+    const H = sheetH(el);
+    if (!st.vis) {
+      if (!open) return;
+      st.vis = true; st.v = 0;
+      st.x = reduceMotion.matches ? 0 : H;
+      st.o = reduceMotion.matches ? 0 : 1;
+      el.style.visibility = 'visible';
+    }
+    if (typeof v === 'number') st.v = v;
+    const done = () => {
+      if (open) return;
+      st.vis = false; st.level = 0;
+      el.style.visibility = '';
+      el.style.opacity = '';
+      paintSheet(el, st);
+    };
+    const frame = () => paintSheet(el, st);
+    if (reduceMotion.matches) {
+      // posun nechá tam, kde ho prst nechal, a len zmizne alebo sa vráti
+      if (open) { st.x = 0; fadeTo(st, 1, 180, frame, done); }
+      else fadeTo(st, 0, 180, frame, done);
+      return;
+    }
+    st.o = 1;
+    spring(st, open ? 0 : H, cfg || (open ? SPRING_OPEN : SPRING_CLOSE), frame, done);
   }
 
   // ---------- Databáza ----------
@@ -267,9 +377,11 @@
     s.scrollTop = 0;
     if (!openSheets.includes(id)) openSheets.push(id);
     syncScrim();
+    moveSheet(id, true);
   }
-  function closeSheet(id) {
+  function closeSheet(id, v) {
     document.getElementById(id).classList.remove('open');
+    moveSheet(id, false, v);
     openSheets = openSheets.filter(x => x !== id);
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     if (id === 'mini-sheet' && currentView === 'settings') renderSettings();
@@ -280,6 +392,82 @@
     $('#scrim').classList.toggle('show', openSheets.length > 0);
     document.documentElement.classList.toggle('locked', openSheets.length > 0);
   }
+  // Zatvorenie vrchného panela (ťuknutím mimo, klávesou Esc alebo stiahnutím prstom)
+  function dismissTop(v) {
+    const top = openSheets[openSheets.length - 1];
+    if (top === 'entry-sheet') cancelEntry(v); else if (top) closeSheet(top, v);
+  }
+
+  // ---------- Panel sa dá stiahnuť prstom ----------
+  // Ide za prstom 1:1, nad horným okrajom pruží, po pustení rozhodne rýchlosť švihnutia.
+  let drag = null;
+  function dragBegin(target, x, y, mouse) {
+    const el = target.closest && target.closest('.sheet');
+    if (!el || el.id !== openSheets[openSheets.length - 1]) return;
+    const head = !!target.closest('.sheet-head');
+    if (mouse && !head) return;   // myšou sa ťahá len za hlavičku, inak by to rušilo označovanie textu
+    drag = { el, id: el.id, x0: x, y0: y, head, mode: null, hist: [] };
+  }
+  function dragMove(x, y, ev) {
+    if (!drag) return;
+    const dx = x - drag.x0, dy = y - drag.y0;
+    const atTop = drag.el.scrollTop <= 0;
+    if (!drag.mode) {
+      // pri vrchu panela potiahnutie nadol nemá čo posúvať, tak ho hneď zachytíme
+      if (ev && ev.cancelable && dy > 0 && dy >= Math.abs(dx) && (drag.head || atTop)) ev.preventDefault();
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;   // malý pohyb ešte nie je ťahanie
+      if (dy > 0 && Math.abs(dy) > Math.abs(dx) && (drag.head || atTop)) {
+        const st = sheetSt(drag.id);
+        cancelAnimationFrame(st.raf);   // chytený aj počas animácie: pokračuje z aktuálnej polohy
+        drag.mode = 'sheet';
+        drag.base = st.x;
+        drag.ys = y;
+        drag.H = sheetH(drag.el);
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      } else { drag = null; return; }
+    }
+    if (ev && ev.cancelable) ev.preventDefault();
+    const st = sheetSt(drag.id);
+    let ny = drag.base + (y - drag.ys);
+    if (ny < 0) ny = -rubberband(-ny, drag.H);
+    st.x = ny; st.v = 0; st.o = 1;
+    paintSheet(drag.el, st);
+    const now = performance.now();
+    drag.hist.push({ y, t: now });
+    while (drag.hist.length > 2 && now - drag.hist[0].t > 100) drag.hist.shift();
+  }
+  function dragEnd() {
+    const d = drag;
+    drag = null;
+    if (!d || d.mode !== 'sheet') return;
+    const h = d.hist, a = h[0], b = h[h.length - 1];
+    const v = h.length > 1 && b.t > a.t ? (b.y - a.y) / ((b.t - a.t) / 1000) : 0;
+    const st = sheetSt(d.id);
+    // rozhoduje miesto, kam by panel dobehol, nie kde ho prst pustil
+    if (st.x + project(v) > d.H * 0.5 && v > -200) dismissTop(v);
+    else moveSheet(d.id, true, v, SPRING_BACK);
+  }
+  document.addEventListener('touchstart', ev => {
+    if (ev.touches.length !== 1) { drag = null; return; }
+    dragBegin(ev.target, ev.touches[0].clientX, ev.touches[0].clientY, false);
+  }, { passive: true });
+  document.addEventListener('touchmove', ev => {
+    if (drag && ev.touches.length === 1) dragMove(ev.touches[0].clientX, ev.touches[0].clientY, ev);
+  }, { passive: false });
+  document.addEventListener('touchend', dragEnd);
+  document.addEventListener('touchcancel', dragEnd);
+  document.addEventListener('pointerdown', ev => { if (ev.pointerType === 'mouse' && ev.button === 0) dragBegin(ev.target, ev.clientX, ev.clientY, true); });
+  document.addEventListener('pointermove', ev => { if (ev.pointerType === 'mouse' && drag) dragMove(ev.clientX, ev.clientY, ev); });
+  document.addEventListener('pointerup', ev => {
+    if (ev.pointerType !== 'mouse' || !drag) return;
+    // po ťahaní myšou nesmie klik zavrieť panel cez tlačidlo pod kurzorom
+    if (drag.mode === 'sheet') {
+      const swallow = e => { e.stopPropagation(); e.preventDefault(); };
+      addEventListener('click', swallow, true);
+      setTimeout(() => removeEventListener('click', swallow, true), 0);
+    }
+    dragEnd();
+  });
 
   function render() {
     const v = currentView;
@@ -305,8 +493,9 @@
     d.classList.remove('show');
     void d.offsetWidth;   // znovu spustí animáciu
     d.classList.add('show');
+    buzz(12);   // v tom istom okamihu ako fajka
     clearTimeout(doneTimer);
-    doneTimer = setTimeout(() => d.classList.remove('show'), 1100);
+    doneTimer = setTimeout(() => d.classList.remove('show'), 800);
   }
 
   function switchView(v) {
@@ -317,10 +506,22 @@
     window.scrollTo(0, 0);
   }
 
+  // Obsah dňa prichádza zo strany, kde ten deň leží v pásiku
+  let dayAnimTimer;
   function goDay(d) {
+    const prev = selDay;
     selDay = d;
     followToday = d === todayStr();
-    if (currentView === 'today') { renderToday(); syncNavbar(); } else switchView('today');
+    if (currentView !== 'today') { switchView('today'); return; }
+    renderToday();
+    syncNavbar();
+    if (d === prev) return;
+    const v = $('#view-today');
+    v.classList.remove('go-next', 'go-prev');
+    void v.offsetWidth;
+    v.classList.add(d > prev ? 'go-next' : 'go-prev');
+    clearTimeout(dayAnimTimer);
+    dayAnimTimer = setTimeout(() => v.classList.remove('go-next', 'go-prev'), 400);
   }
 
   // ---------- Čipy (tlačidlá na výber) ----------
@@ -827,8 +1028,12 @@
       return;
     }
 
-    let h = `<div class="sheet-head">${editingId ? '' : '<button type="button" class="x" data-act="form-back" aria-label="Späť">‹</button>'}
-      <span class="tbadge ${t}">${TYPES[t].ico}</span><h2>${editingId ? 'Upraviť záznam' : TYPES[t].label}</h2>${close}</div>`;
+    // nový záznam: typ sa prepína priamo hore, bez samostatného kroku výberu
+    let h = editingId
+      ? `<div class="sheet-head"><span class="tbadge ${t}">${TYPES[t].ico}</span><h2>Upraviť záznam</h2>${close}</div>`
+      : `<div class="sheet-head"><h2>Nový záznam</h2>${close}</div>
+        <div class="segbar typeseg" role="tablist" aria-label="Typ záznamu">` + Object.entries(TYPES).map(([k, v]) =>
+          `<button type="button" role="tab" aria-selected="${k === t}" class="type-btn tseg ${k}${k === t ? ' on' : ''}" data-type="${k}">${v.ico}<span>${v.short}</span></button>`).join('') + '</div>';
 
     if (t === 'food') {
       h += descField('Čo si jedla alebo pila?');
@@ -938,7 +1143,7 @@
 
   function openEntry() {
     editingId = null;
-    draft = newDraft();
+    draft = newDraft('food');   // najčastejší zápis je jedlo, otvorí sa rovno
     if (currentView === 'today' && selDay !== todayStr()) {
       draft.ts = parseDay(selDay).getTime() + 12 * 3600e3;
       draft.tsTouched = true;
@@ -946,6 +1151,9 @@
     }
     renderForm();
     openSheet('entry-sheet');
+    // kurzor rovno do poľa (musí byť ešte v rámci ťuknutia, inak iPhone neukáže klávesnicu)
+    const d = $('#f-desc');
+    if (d) d.focus({ preventScroll: true });
   }
 
   function draftDirty() {
@@ -953,11 +1161,18 @@
     return !!(d.desc.trim() || d.kinds.length || d.severity != null || d.stool || d.note.trim());
   }
 
-  function cancelEntry() {
-    if (!editingId && draftDirty() && !confirm('Zahodiť rozpracovaný záznam?')) return;
+  // Rozpracovaný záznam sa zahodí hneď, ale dá sa vrátiť tlačidlom Späť
+  function cancelEntry(v) {
+    const lost = !editingId && draftDirty() ? draft : null;
     editingId = null;
     draft = newDraft();
-    closeSheet('entry-sheet');
+    closeSheet('entry-sheet', v);
+    if (lost) toast('Rozpracovaný záznam zahodený', { run: () => {
+      editingId = null;
+      draft = lost;
+      renderForm();
+      openSheet('entry-sheet');
+    } });
   }
 
   function startEdit(id) {
@@ -980,14 +1195,20 @@
 
   async function deleteCurrent() {
     if (!editingId) return;
-    if (!confirm('Naozaj zmazať tento záznam?')) return;
+    const old = entries.find(e => e.id === editingId);
     await DB.del('entries', editingId);
     entries = entries.filter(e => e.id !== editingId);
     editingId = null;
     draft = newDraft();
     closeSheet('entry-sheet');
-    toast('Záznam zmazaný');
+    buzz();
     render();
+    if (old) toast('Záznam zmazaný', { run: async () => {
+      await DB.put('entries', old);
+      if (!entries.some(e => e.id === old.id)) entries.push(old);
+      flashId = old.id;
+      render();
+    } });
   }
 
   async function setDayField(date, f, value) {
@@ -1709,11 +1930,7 @@
   document.addEventListener('click', async ev => {
     const t = ev.target;
 
-    if (t.id === 'scrim') {
-      const top = openSheets[openSheets.length - 1];
-      if (top === 'entry-sheet') cancelEntry(); else if (top) closeSheet(top);
-      return;
-    }
+    if (t.id === 'scrim') { dismissTop(); return; }
 
     const tab = t.closest('.tab');
     if (tab) {
@@ -1728,17 +1945,13 @@
     const typeBtn = t.closest('.type-btn');
     if (typeBtn) {
       const ty = typeBtn.dataset.type;
-      if (draft.type !== ty) {
-        if (editingId) draft.type = ty;
-        else {
-          const keep = draft.tsTouched ? { ts: draft.ts, tsTouched: true, tsOff: draft.tsOff, tsCustom: draft.tsCustom } : null;
-          draft = newDraft(ty);
-          if (keep) Object.assign(draft, keep);
-        }
-      } else if (!editingId) {
-        const keep = draft.tsCustom ? { ts: draft.ts, tsTouched: true, tsCustom: true } : null;
-        draft = newDraft();
-        if (keep) Object.assign(draft, keep);
+      if (draft.type === ty) return;
+      if (editingId) draft.type = ty;
+      else {
+        // pri zmene typu ostane napísaný text, poznámka aj zvolený čas
+        const keep = { desc: draft.desc, note: draft.note };
+        if (draft.tsTouched) Object.assign(keep, { ts: draft.ts, tsTouched: true, tsOff: draft.tsOff, tsCustom: draft.tsCustom });
+        draft = Object.assign(newDraft(ty), keep);
       }
       renderForm();
       $('#entry-sheet').scrollTop = 0;
@@ -1859,6 +2072,7 @@
         draft[f] = draft[f] === v ? (f === 'duration' ? '' : null) : v;
       }
       refreshGroup(group, draft[f]);
+      if (f === 'severity' && draft.severity >= 7) buzz(8);
       if (f === 'duration') $('#f-duration').value = draft.duration;
       if (f === 'severity') $('#sev-word').textContent = sevWord(draft.severity);
       return;
@@ -1891,6 +2105,7 @@
         const d = act.dataset.date || todayStr();
         await setDayField(d, 'noSymptoms', true);
         if (days[d] && !days[d].noSymptoms) delete days[d].noSymptoms;
+        if (days[d] && days[d].noSymptoms) buzz();
         toast(days[d] && days[d].noSymptoms ? 'Super, deň bez ťažkostí ' : 'Označenie zrušené');
         if (openSheets.includes('entry-sheet') && !draft.type) closeSheet('entry-sheet');
         render();
@@ -1907,7 +2122,6 @@
       case 'trace-close': closeSheet('trace-dialog'); break;
       case 'form-back': {
         const keep = draft.tsCustom ? { ts: draft.ts, tsTouched: true, tsCustom: true } : null;
-        if (draftDirty() && !confirm('Zahodiť rozpracovaný záznam?')) break;
         draft = newDraft();
         if (keep) Object.assign(draft, keep);
         renderForm();
@@ -1936,8 +2150,9 @@
         break;
       }
       case 'ct-del': {
-        if (!confirm('Zmazať túto vlastnú položku? Vo vyhodnotení sa prestane rátať.')) break;
         const id = act.dataset.id;
+        const prev = { customTags: customTags(), intol: riskTags(), test: meta.test || null };
+        const label = (prev.customTags.find(c => c.id === id) || {}).label || 'Položka';
         await setMeta('customTags', customTags().filter(c => c.id !== id));
         await setMeta('intol', riskTags().filter(t => t !== id));
         if (meta.test && meta.test.tag === id) await setMeta('test', null);
@@ -1945,15 +2160,27 @@
         const top = $('#mini-sheet').scrollTop;
         openIntol();
         $('#mini-sheet').scrollTop = top;
+        toast(label + ' zmazané', { run: async () => {
+          await setMeta('customTags', prev.customTags);
+          await setMeta('intol', prev.intol);
+          await setMeta('test', prev.test);
+          syncCustomTags();
+          if (openSheets.includes('mini-sheet')) {
+            const tp = $('#mini-sheet').scrollTop;
+            openIntol();
+            $('#mini-sheet').scrollTop = tp;
+          } else render();
+        } });
         break;
       }
       case 'fnd-new': openFinding({}); break;
       case 'fnd-save': saveFinding(); break;
       case 'fnd-del': {
-        if (!confirm('Zmazať toto zistenie?')) break;
+        const prevF = findings();
         await setMeta('findings', findings().filter(x => x.id !== fDraft.id));
         closeSheet('mini-sheet');
         render();
+        toast('Zistenie zmazané', { run: async () => { await setMeta('findings', prevF); render(); } });
         break;
       }
       case 'test-new': openTestNew(); break;
@@ -1974,9 +2201,10 @@
         break;
       }
       case 'test-cancel': {
-        if (!confirm('Zrušiť prebiehajúci test?')) break;
+        const prevT = meta.test;
         await setMeta('test', null);
         render();
+        toast('Test zrušený', { run: async () => { await setMeta('test', prevT); render(); } });
         break;
       }
       case 'report': openReport(); break;
