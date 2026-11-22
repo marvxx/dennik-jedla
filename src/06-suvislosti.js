@@ -83,6 +83,18 @@
       // najsilnejší výpočet určuje číslo, ktoré sa ukáže pri názve
       s.top = s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').sort((a, b) => b.x.ratio - a.x.ratio)[0] || null;
     }
+    // „Sleduj“: vyzerá podozrivo, ale môže to byť ešte náhoda
+    if (r.hint) {
+      const s = S.get(r.hint.key);
+      if (s && s.verdict === 'none') { s.verdict = 'hint'; s.score = 0.5; s.top = s.sig.find(g => g.kind === 'meal' && g.x === r.hint) || null; }
+    }
+    // čo je vysvetlené inou príčinou (káva → len keď je s mliekom)
+    r.foods.concat(r.ctx).filter(x => x.explainedBy).forEach(x => {
+      const p = S.get(x.explainedBy), s = S.get(x.key);
+      if (!p || !s) return;
+      s.explainedBy = p.name;
+      (p.explains = p.explains || []).push(s.name);
+    });
     lastSus = S;
     return [...S.values()].filter(s => s.verdict !== 'none').sort((a, b) => b.score - a.score);
   }
@@ -114,7 +126,7 @@
   }
   // vadí len väčšie množstvo za deň, jedno jedlo samo nie
   const doseOnly = s => hasBad(s, 'load') && !hasBad(s, 'meal');
-  const VERDICT_TXT = { strong: 'Silné podozrenie', sus: 'Podozrenie', none: 'Bez jasného súvisu' };
+  const VERDICT_TXT = { strong: 'Silné podozrenie', sus: 'Podozrenie', hint: 'Sleduj, zatiaľ môže ísť o náhodu', none: 'Bez jasného súvisu' };
   const susConf = s => Math.max(1, ...s.sig.filter(g => SIG_W[g.kind] && g.x.level !== 'none').map(g => conf(g.x)));
   const susRatio = s => s.top ? ratioText(s.top.x) : '';
 
@@ -149,7 +161,7 @@
     const testable = s.id.startsWith('tag:') || !s.id.includes(':');
     return `<div class="card hero v-${s.verdict}"><p class="eyebrow">Hlavné podozrenie</p>
       <div class="res-top"><h2 class="res-name">${esc(s.name)}</h2><span class="ratio">${susRatio(s)}</span></div>
-      <ul class="why">${lines.map(g => `<li>${sigSentence(g, s)}</li>`).join('')}</ul>
+      <ul class="why">${lines.map(g => `<li>${sigSentence(g, s)}</li>`).join('')}</ul>${explainsHtml(s)}
       ${s.kids && s.kids.length ? `<div class="kids"><p class="tiny">Patria sem aj jedlá, ktoré to obsahujú:</p><div class="chips">` +
         s.kids.map(k => `<button type="button" class="chip" data-sus="${esc(k.id)}">${esc(k.name)}${k.top ? ` <span>${susRatio(k)}</span>` : ''}</button>`).join('') + '</div></div>' : ''}
       <div class="res-foot"><span class="conf c${c}"><i></i><i></i><i></i>${CONF_TXT[c]}</span></div>
@@ -161,8 +173,14 @@
     return '<div class="dayrows flat">' + list.map(s => {
       const g = s.top;
       return `<button type="button" class="dayrow sus-row v-${s.verdict}" data-sus="${esc(s.id)}"><span class="dot"></span>
-        <span><b>${esc(s.name)}</b><small>${g ? sigSentence(g, s) : ''}</small>${s.kids && s.kids.length ? `<small class="kids-t">Patrí sem aj: ${esc(s.kids.map(k => k.name).join(', '))}</small>` : ''}</span><span class="ratio">${susRatio(s)}</span><span class="chev">›</span></button>`;
+        <span><b>${esc(s.name)}</b>${s.verdict === 'hint' ? '<small class="hint-t">Sleduj · zatiaľ môže ísť o náhodu</small>' : ''}<small>${g ? sigSentence(g, s) : ''}</small>${s.kids && s.kids.length ? `<small class="kids-t">Patrí sem aj: ${esc(s.kids.map(k => k.name).join(', '))}</small>` : ''}</span><span class="ratio">${susRatio(s)}</span><span class="chev">›</span></button>`;
     }).join('') + '</div>';
+  }
+
+  // Jedlá, ktoré sa zdali podozrivé len preto, že sa jedia spolu s touto príčinou
+  function explainsHtml(s) {
+    if (!s.explains || !s.explains.length || s.verdict === 'none') return '';
+    return `<p class="tiny expl">Vysvetľuje aj: ${esc(s.explains.join(', '))}. Samy o sebe ťažkosti zrejme nerobia.</p>`;
   }
 
   // Detail podozrivého: všetky výpočty, kedy prichádzajú ťažkosti a konkrétne jedlá
@@ -176,7 +194,9 @@
     const sigs = s.sig.slice().sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
     let h = `<div class="sheet-head"><h2>${esc(s.name)}</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>
       <p class="verdict v-${s.verdict}">${VERDICT_TXT[s.verdict]}${s.top ? ' · ' + susRatio(s) : ''}</p>`;
-    h += grp('Čo ukazujú údaje', '<ul class="why">' + sigs.map(g => `<li class="${SIG_W[g.kind] && g.x.level !== 'none' ? 'bad' : g.kind === 'best' ? 'good' : ''}">${sigSentence(g, s)}</li>`).join('') + '</ul>');
+    h += grp('Čo ukazujú údaje', '<ul class="why">' + sigs.map(g => `<li class="${SIG_W[g.kind] && g.x.level !== 'none' ? 'bad' : g.kind === 'best' ? 'good' : ''}">${sigSentence(g, s)}</li>`).join('') + '</ul>' + explainsHtml(s)
+      + (s.verdict === 'hint' ? '<p class="small" style="margin:10px 0 0">Vyzerá to podozrivo, ale údajov je zatiaľ málo a môže to byť náhoda. Najistejšie to overí test: na 2 týždne to vynechať.</p>' : '')
+      + (s.explainedBy ? `<p class="small" style="margin:10px 0 0">Samo o sebe to zrejme nevadí. Ťažkosti prichádzajú, keď je v tom aj <b>${esc(s.explainedBy)}</b>.</p>` : ''));
     if (ev && ev.mine.n >= 3 && OUT.delay) {
       const lab = ['do 1 h', '1–2 h', '2–4 h', '4–8 h', '8–24 h'];
       const rows = ev.buckets.map((_, i) => `<span>${lab[i]}</span>

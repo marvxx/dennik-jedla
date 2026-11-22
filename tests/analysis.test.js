@@ -10,8 +10,9 @@ const NOW = new Date(2026, 10, 21, 16, 0).getTime();   // sobota 21. 11. 2026 16
 const food = (id, ts, desc, extra) => Object.assign({ id, type: 'food', ts, desc, tags: [], noTags: [] }, extra || {});
 const sym = (id, ts, severity) => ({ id, type: 'symptom', ts, desc: 'ťažkosti', severity: severity || 5 });
 
+// od verzie 4.1 výsledok musí prejsť štatistickou istotou, preto 6 týždňov údajov namiesto 4
 test('mliečne vyjdú ako najsilnejšia skupina pred ťažkosťami', () => {
-  const { entries, days } = makeData(NOW);
+  const { entries, days } = makeData(NOW, { days: 42 });
   const r = A.analyze(entries, days, { now: NOW });
   const tags = r.ctx.filter(x => x.key.startsWith('tag:'));
   const dairy = tags.find(x => x.key === 'tag:mliecne');
@@ -21,7 +22,7 @@ test('mliečne vyjdú ako najsilnejšia skupina pred ťažkosťami', () => {
 });
 
 test('dávka za deň: 2 a viac mliečnych porcií je podozrivých', () => {
-  const { entries, days } = makeData(NOW);
+  const { entries, days } = makeData(NOW, { days: 42 });
   const r = A.analyze(entries, days, { now: NOW });
   const load = r.loads.find(x => x.key === 'load:mliecne');
   assert.ok(load && load.level !== 'none');
@@ -170,4 +171,51 @@ test('fráza za predložkou je v základnom tvare', () => {
   const r = A.analyze(e, {}, { now: NOW, minN: 50 });
   const labels = r.foodsPending.map(x => x.label);
   assert.ok(labels.includes('maslo a šunka'), labels.join(', '));
+});
+
+test('bez príčiny: náhodné ťažkosti nevytvoria podozrenia', () => {
+  // 8 týždňov pestrej stravy, ťažkosti náhodne asi každý piaty deň
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const menu = ['ovsená kaša s mliekom', 'chlieb so šunkou', 'jogurt s ovocím', 'kuracie mäso s ryžou', 'cestoviny so syrom',
+    'fazuľová polievka', 'ryba so zemiakmi', 'šalát s tuniakom', 'ryža so zeleninou', 'omeleta so syrom', 'káva s mliekom', 'banán'];
+  const entries = [], days = {};
+  let n = 0;
+  for (let i = 1; i <= 56; i++) {
+    const base = new Date(2026, 8, i).getTime();
+    const ds = A.localDate(base + 12 * H);
+    [7.5, 12.5, 18.5].forEach(h => entries.push(food('f' + (++n), base + h * H, menu[Math.floor(rnd() * menu.length)])));
+    if (rnd() < 0.2) entries.push(sym('s' + (++n), base + (9 + rnd() * 12) * H)); else days[ds] = { date: ds, noSymptoms: true };
+  }
+  const r = A.analyze(entries, days, { now: NOW });
+  const bad = r.foods.concat(r.ctx).filter(x => x.level !== 'none');
+  assert.equal(bad.length, 0, 'falošné podozrenia: ' + bad.map(x => x.label).join(', '));
+});
+
+test('káva s mliekom: keď vadí mlieko, samotná káva sa vysvetlí mliekom', () => {
+  let seed = 11;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const entries = [], days = {};
+  let n = 0;
+  for (let i = 1; i <= 56; i++) {
+    const base = new Date(2026, 8, i).getTime();
+    const ds = A.localDate(base + 12 * H);
+    let had = false;
+    const add = (h, desc, dairy) => {
+      const ts = base + h * H;
+      entries.push(food('f' + (++n), ts, desc));
+      if (dairy && rnd() < 0.5) { entries.push(sym('s' + (++n), ts + 2 * H)); had = true; }
+    };
+    const milk = rnd() < 0.6;
+    add(7, milk ? 'káva s mliekom' : 'čierna káva', milk);
+    add(12.5, ['kuracie mäso s ryžou', 'cestoviny so syrom', 'ryba so zemiakmi', 'bryndzové halušky'][i % 4], i % 4 === 1 || i % 4 === 3);
+    add(18.5, ['ryža so zeleninou', 'omeleta', 'kuracia polievka'][i % 3], false);
+    if (!had) days[ds] = { date: ds, noSymptoms: true };
+  }
+  const r = A.analyze(entries, days, { now: NOW });
+  const all = r.foods.concat(r.ctx);
+  const dairy = all.find(x => x.key === 'tag:mliecne' || x.label === 'mliečne');
+  assert.ok(dairy && dairy.level !== 'none', 'mliečne by mali vyjsť');
+  const coffee = all.filter(x => x.key === 'tag:kava' || x.label === 'káva');
+  assert.ok(coffee.every(x => x.level === 'none'), 'samotná káva by nemala byť podozrivá');
 });

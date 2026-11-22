@@ -248,7 +248,40 @@
     return { key, label, group, withN, withHit, outN, outHit, rateWith, rateWithout, ratio, level };
   }
 
+  // ---------- Štatistická istota ----------
+  // Pri desiatkach jedál testovaných naraz vyjde „2× častejšie“ aj čistou náhodou. Preto sa každý
+  // výsledok overí Fisherovým testom (aká je šanca, že je to náhoda) a celá skupina výsledkov
+  // sa opraví na počet testov (Benjamini–Hochberg). Overené na simulovaných denníkoch.
+  const LF = [0];
+  const lf = n => { while (LF.length <= n) LF.push(LF[LF.length - 1] + Math.log(LF.length)); return LF[n]; };
+  const lc = (n, k) => lf(n) - lf(k) - lf(n - k);
+  function fisherP(a, n1, K, N) {   // jednostranný: je podiel ťažkostí „s tým“ vyšší?
+    if (n1 < 1 || N - n1 < 1) return 1;
+    const hi = Math.min(n1, K), den = lc(N, n1);
+    let p = 0;
+    for (let x = a; x <= hi; x++) p += Math.exp(lc(K, x) + lc(N - K, n1 - x) - den);
+    return Math.min(1, p);
+  }
+  function bhQ(ps) {
+    const idx = ps.map((p, i) => [p, i]).sort((a, b) => a[0] - b[0]);
+    const q = new Array(ps.length);
+    let m = 1;
+    for (let j = idx.length - 1; j >= 0; j--) { m = Math.min(m, idx[j][0] * ps.length / (j + 1)); q[idx[j][1]] = m; }
+    return q;
+  }
+  // úroveň podľa istoty: vysoká (q < 1 %), stredná (q < 10 %), inak žiadna
+  function grade(list) {
+    list.forEach(r => { r.p = fisherP(r.withHit, r.withN, r.withHit + r.outHit, r.withN + r.outN); });
+    const q = bhQ(list.map(r => r.p));
+    list.forEach((r, i) => {
+      r.q = q[i];
+      r.level = r.ratio >= 1.3 && r.withHit >= 2 ? (q[i] < 0.01 ? 'high' : q[i] < 0.1 ? 'mid' : 'none') : 'none';
+    });
+  }
+
+  const LV = { high: 2, mid: 1, none: 0 };
   function sortResults(a, b) {
+    if (a.level && b.level && LV[b.level] !== LV[a.level]) return LV[b.level] - LV[a.level];
     if (b.ratio !== a.ratio) return b.ratio - a.ratio;
     if (b.rateWith !== a.rateWith) return b.rateWith - a.rateWith;
     if (b.withHit !== a.withHit) return b.withHit - a.withHit;
@@ -379,6 +412,7 @@
         if (st.withN >= minN && totalN - st.withN >= 1) {
           const r = summarize(it.k, it.label, st.withN, st.withHit, totalN, totalHit, group);
           r.sig = it.sig;
+          Object.defineProperty(r, 'idx', { value: st.idx, enumerable: false });
           ready.push(r);
         } else if (st.withN < minN) {
           pending.push({ key: it.k, label: it.label, n: st.withN });
@@ -391,6 +425,36 @@
 
     const foods = finish(foodStats, 'food');
     const ctx = finish(ctxStats, 'ctx', new Set(foods.ready.map(x => x.sig)));
+
+    // Jedlá a okolnosti: istota + postupný výber. Najjasnejšia príčina sa prijme ako prvá,
+    // ďalšie sa overujú už len na jedlách bez nej („káva“ vs. „káva s mliekom“).
+    const mealRes = foods.ready.concat(ctx.ready);
+    grade(mealRes);
+    const accepted = [];
+    for (const r of mealRes.filter(x => x.level !== 'none').sort((a, b) => a.p - b.p)) {
+      if (accepted.length) {
+        const excl = new Set();
+        accepted.forEach(x => x.idx.forEach(i => excl.add(i)));
+        const mine = new Set(r.idx);
+        let a = 0, n1 = 0, K = 0, N = 0;
+        info.forEach((x, i) => { if (excl.has(i)) return; N++; if (x.hit) K++; if (mine.has(i)) { n1++; if (x.hit) a++; } });
+        const p = fisherP(a, n1, K, N), rw = n1 ? a / n1 : 0, ro = N - n1 ? (K - a) / (N - n1) : 0;
+        if (!(n1 >= 3 && p < 0.05 && rw >= 1.3 * ro)) {
+          const by = accepted.find(x => x.idx.some(i => mine.has(i)));
+          r.level = 'none';
+          if (by) { r.explainedBy = by.key; r.explainedLabel = by.label; }
+          continue;
+        }
+      }
+      accepted.push(r);
+    }
+    // „Sleduj“: niečo vyzerá podozrivo, ale na istotu je zatiaľ málo údajov (najviac jedno)
+    const accIdx = new Set();
+    accepted.forEach(x => x.idx.forEach(i => accIdx.add(i)));
+    const hint = mealRes.filter(r => r.level === 'none' && !r.explainedBy && r.p < 0.01 && r.withHit >= 3 && r.ratio >= 1.5
+      && r.idx.filter(i => accIdx.has(i)).length <= r.idx.length / 2).sort((a, b) => a.p - b.p)[0] || null;
+    foods.ready.sort(sortResults);
+    ctx.ready.sort(sortResults);
 
     // Rizikové jedlo: kedy vadí viac / menej (porovnanie v rámci rizikových jedál)
     const minSub = Math.min(minN, 3);
@@ -411,6 +475,7 @@
         const wHit = w.filter(x => x.hit).length;
         if (w.length >= minSub && rl.length - w.length >= minSub) riskCtx.push(summarize(key, key, w.length, wHit, rl.length, rHit, 'risk'));
       }
+      grade(riskCtx);
       riskCtx.sort(sortResults);
     }
 
@@ -458,6 +523,7 @@
       if (wN >= minN && dTotal - wN >= 1) dayReady.push(summarize(key, key, wN, wHit, dTotal, dHit, 'day'));
       else if (wN > 0 && wN < minN) dayPending.push({ key, label: key, n: wN });
     }
+    grade(dayReady);
     dayReady.sort(sortResults);
 
     // Denná dávka: 2 a viac porcií tej istej skupiny za deň (porcia a enzým menia váhu)
@@ -478,7 +544,9 @@
         const wHit = w.filter(d => symDays.has(d)).length;
         if (w.length >= minSub && known.length - w.length >= minSub) loads.push(summarize('load:' + t, t, w.length, wHit, known.length, kHit, 'load'));
       }
+      grade(loads.concat(stacking));
       loads.sort(sortResults);
+      stacking.sort(sortResults);
     }
 
     return {
@@ -487,7 +555,7 @@
       foods: foods.ready, foodsPending: foods.pending,
       ctx: ctx.ready, ctxPending: ctx.pending,
       days: dayReady, daysPending: dayPending, dayTotal: dTotal, dayHit: dHit,
-      riskCtx, stacking, loads, skipped, usesNoSym,
+      riskCtx, stacking, loads, skipped, usesNoSym, hint,
       opts: { fromH, toH, minN },
     };
   }
@@ -657,7 +725,7 @@
     return out.sort((a, b) => b.uses - a.uses);
   }
 
-  const api = { analyze, bestWorst, evidence, medEffects, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
+  const api = { fisherP, analyze, bestWorst, evidence, medEffects, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);

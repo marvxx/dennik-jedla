@@ -762,6 +762,11 @@ ul.why li.good::before { background: var(--food); }
 
 .verdict { display: inline-block; margin: -4px 0 12px; padding: 4px 12px; border-radius: 999px; font-weight: 700; font-size: .8824rem; background: var(--warn-soft); color: var(--warn); }
 .verdict.v-strong { background: var(--sym-soft); color: var(--sym); }
+.verdict.v-hint { background: var(--surface-2); color: var(--ink-2); }
+.sus-row.v-hint .dot { background: var(--ink-3); }
+.sus-row.v-hint .ratio { background: var(--surface-2); color: var(--ink-2); }
+.hint-t { color: var(--ink-3); font-weight: 600; }
+.expl { margin: 8px 0 0; color: var(--ink-2); }
 .verdict.v-none { background: var(--surface-2); color: var(--ink-2); }
 
 /* za koľko po jedle prišli ťažkosti */
