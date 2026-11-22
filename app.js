@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '4.0.1';
+  const APP_VERSION = '4.0.2';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -1049,9 +1049,13 @@
     const e = quickSymId && entries.find(x => x.id === quickSymId);
     if (!e || Date.now() - e.created > 15 * 60e3) { quickSymId = null; return ''; }
     const on = e.kinds || [];
-    return `<div class="qk"><span class="qk-h">Aké? <span class="tiny">môžeš viac</span></span><div class="chips">` +
-      KINDS.map(k => `<button type="button" class="chip${on.includes(k) ? ' on' : ''}" data-act="qs-kind" data-v="${esc(k)}">${esc(k)}</button>`).join('') +
-      `<button type="button" class="chip qk-done" data-act="qs-done">Hotovo</button></div></div>`;
+    // dva riadky, dĺžky slov vyvážené tak, aby sa nič nezalamovalo; Hotovo v hlavičke
+    const rows = [['kŕč', 'nutkanie na stolicu', 'nevoľnosť'], ['nadúvanie', 'plynatosť', 'pálenie záhy']];
+    const chip = k => `<button type="button" class="chip${on.includes(k) ? ' on' : ''}" data-act="qs-kind" data-v="${esc(k)}">${esc(k)}</button>`;
+    return `<div class="qk"><div class="qk-top"><span class="qk-h">Aké? <span class="tiny">môžeš viac</span></span>` +
+      `<button type="button" class="linkbtn qk-done" data-act="qs-done">Hotovo</button></div>` +
+      rows.map(r => `<div class="qk-row">${r.filter(k => KINDS.includes(k)).map(chip).join('')}</div>`).join('') +
+      `</div>`;
   }
   async function toggleQuickKind(k) {
     const e = entries.find(x => x.id === quickSymId);

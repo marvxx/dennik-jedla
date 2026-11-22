@@ -981,7 +981,14 @@ details.more.pend > summary { padding: 6px 0; font-size: .8824rem; color: var(--
 .qk-h .tiny { font-weight: 500; color: var(--ink-3); margin-left: 4px; }
 .qk .chip { background: var(--surface); border-color: transparent; min-height: 40px; }
 .qk .chip.on { background: var(--sym); color: #fff; }
-.qk .chip.qk-done { background: transparent; color: var(--accent); font-weight: 700; }
+.qk-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.qk-top .qk-h { margin-bottom: 0; }
+.qk-top .qk-done { font-weight: 700; padding: 6px 2px; min-height: 32px; }
+.qk { padding-left: 8px; padding-right: 8px; }
+.qk-top { padding: 0 4px; }
+.qk-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.qk-row + .qk-row { margin-top: 5px; }
+.qk-row .chip { flex: 1 1 auto; margin: 0; justify-content: center; white-space: nowrap; font-size: .8235rem; padding: 6px 7px; }
 /* rovnaká veľkosť krúžkov ako pri ťažkostiach: 7 z 10 stĺpcov */
 .chips.stoolrow { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
 .chips.stoolrow .chip { min-height: 0; aspect-ratio: 1; padding: 0; border-radius: 50%; justify-content: center; text-align: center; font: 700 0.8824rem var(--round); background: var(--surface); }
