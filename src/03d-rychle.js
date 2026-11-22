@@ -67,7 +67,7 @@
 
   // 4) Jedlo zapísané len názvom (napr. „segedín“) sa oplatí rozpísať na suroviny
   function recipeAsk(e) {
-    if (e.type !== 'food' || isCoffee(e)) return null;
+    if (e.type !== 'food' || isCoffee(e) || aiOn()) return null;   // s AI sa rozpíše samo
     const desc = e.desc.trim(), k = desc.toLowerCase();
     if (/[,+]|\s(s|so|a|aj|na|z|zo|v|vo)\s/i.test(' ' + desc + ' ')) return null;   // už je rozpísané
     if (Analysis.recipeOf(desc).length || (meta.rcAsked || []).includes(k)) return null;

@@ -403,7 +403,7 @@
     render();
     const fresh = $('.entry.flash');
     if (fresh) fresh.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    if (!wasEditing) offerRecipe(e);
+    if (!wasEditing) { offerRecipe(e); aiAfterSave(e); }
   }
 
   function openEntry() {

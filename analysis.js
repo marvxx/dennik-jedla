@@ -129,13 +129,16 @@
       'parmez', 'eidam', 'emental', 'niva', 'puding', 'latte', 'cappuc', 'kapucin', 'acidk', 'zakys', 'cmar', 'mascarpon',
       'ricott', 'feta', 'gouda', 'besamel', 'skyr', 'lucin', 'termix', 'pribin', 'cheddar', 'camembert', 'hermelin',
       'kakao', 'smoothie', 'milkshake', 'mlecn'],
-    lepok: ['chlieb', 'chleb', 'rozok', 'rozk', 'pecivo', 'cestovin', 'spaget', 'makaron', 'pizz', 'knedl', 'halusk',
+    lepok: ['muk', 'krupic', 'chlieb', 'chleb', 'rozok', 'rozk', 'pecivo', 'cestovin', 'spaget', 'makaron', 'pizz', 'knedl', 'halusk',
       'piroh', 'palacink', 'bagel', 'croiss', 'kroas', 'tortil', 'susienk', 'kolac', 'buchti', 'buchty', 'buchta', 'tort',
       'keks', 'oblat', 'muffin', 'zavin', 'strudl', 'psen', 'jacmen', 'pivo', 'piva', 'langos', 'rezen', 'struhank',
       'baget', 'kuskus', 'bulgur', 'lasagn', 'noky', 'gnocch', 'vianock', 'loks', 'krekr', 'toast', 'sendvic',
-      'burger', 'hamburg', 'wrap', 'donut', 'sisk', 'babovk', 'drozdi', 'lievan', 'vafl', 'cereal', 'musli'],
+      'burger', 'hamburg', 'wrap', 'donut', 'sisk', 'babovk', 'lievan', 'vafl', 'cereal', 'musli'],
     fruktoza: ['jablk', 'hrusk', '=med', '=medu', '=medom', 'mango', 'mang', 'melon', 'hrozn', 'ceresn', 'visn', 'datl',
       'figy', 'figa', 'agav', 'dzus', 'mostik', 'kompot', 'sirup', 'susen', 'hrozien'],
+    kvasnice: ['drozd', 'kysnut', 'kvasnic', 'chlieb', 'chleb', 'rozok', 'rozk', 'pecivo', 'baget', 'zeml', 'vianock',
+      'buchti', 'buchty', 'buchta', 'pizz', 'langos', 'kolac', 'bagel', 'croiss', 'kroas', 'donut', 'sisk', 'babovk',
+      'pagac', 'pivo', 'piva', 'burger', 'hamburg', 'sendvic', 'toast', 'lievan'],
     cesnak: ['cesnak', 'cibul', 'porek', 'porik', 'salotk', 'pazitk', 'cesnakov'],
     strukoviny: ['fazul', 'sosovic', 'hrach', 'cicer', 'soj', 'hummus', 'edamam', 'tofu', 'strukov'],
     histamin: ['zrej', 'parmez', 'salam', 'klobas', 'udenin', 'uden', 'tuniak', 'sardin', 'kysl', 'vino', 'vina', 'vinom',
@@ -191,38 +194,109 @@
   // Kvôli rýchlosti: kľúče skupín sa pripravia raz a výsledok pre rovnaký text sa pamätá
   // (pri rokoch záznamov sa ten istý popis vyhodnocuje tisíckrát).
   let TAG_KEYS = null;
-  const TAG_MEMO = new Map();
-  function resetTagCache() { TAG_KEYS = null; TAG_MEMO.clear(); }
-  function detectTags(desc) {
-    const key = String(desc || '');
-    const hit = TAG_MEMO.get(key);
-    if (hit) return hit.slice();
+  const SCAN_MEMO = new Map();
+  function resetTagCache() { TAG_KEYS = null; SCAN_MEMO.clear(); }
+  // Text → slová s ich skupinami: [[slovo bez diakritiky, [skupiny]], …]
+  function scanRaw(text) {
+    const key = String(text || '');
+    const hit = SCAN_MEMO.get(key);
+    if (hit) return hit;
     if (!TAG_KEYS) {
       TAG_KEYS = Object.keys(TAG_WORDS).map(tag => [tag, TAG_WORDS[tag].map(k0 => {
         const exact = k0[0] === '=';
         return [exact, norm(exact ? k0.slice(1) : k0)];
       })]);
     }
-    const found = new Set();
+    const out = [];
     for (const w of key.toLowerCase().split(/[^\p{L}]+/u)) {
       if (w.length < 2) continue;
       const n = norm(w);
+      const tags = [];
       for (const [tag, keys] of TAG_KEYS) {
-        if (found.has(tag)) continue;
         for (const [exact, k] of keys) {
-          if (exact ? n === k : n.startsWith(k)) { found.add(tag); break; }
+          if (exact ? n === k : n.startsWith(k)) { tags.push(tag); break; }
+        }
+      }
+      out.push([n, tags]);
+    }
+    if (SCAN_MEMO.size > 5000) SCAN_MEMO.clear();
+    SCAN_MEMO.set(key, out);
+    return out;
+  }
+
+  // Varianty výrobkov: „bezlaktózové mlieko“, „mlieko bez laktózy“, „bezlepkový chlieb“, „kváskový chlieb“, „chlieb bez droždia“.
+  // Prídavné meno platí pre najbližšie slovo s danou skupinou, „bez …“ pre slovo pred ním.
+  // Bezlaktózové sa nezaráta ako mliečne, ale sleduje sa zvlášť (laktóza v ňom nie je, mliečna bielkovina áno).
+  const MODS = [
+    { re: /^(bezlaktoz|delaktoz|laktofree|lactofree|lactosefree)/, bez: /^laktoz/, group: 'mliecne', add: 'bezlakt' },
+    { re: /^bezlepk/, bez: /^lepk/, group: 'lepok' },
+    { re: /^kvask/, bez: /^(drozd|kvasnic)/, group: 'kvasnice' },
+  ];
+  // Nastavenie „Doma používam“: platí pre jedlá z domu (alebo bez určenia odkiaľ sú)
+  const HOME_RULES = {
+    bezlakt: { group: 'mliecne', add: 'bezlakt' },
+    bezlepk: { group: 'lepok', except: ['pivo', 'piva'] },
+    kvask: { group: 'kvasnice', only: ['chlieb', 'chleb'] },
+  };
+  let HOME = [];
+  function setHome(list) { HOME = (list || []).filter(k => HOME_RULES[k]); }
+
+  function scan(text, home) {
+    const ws = scanRaw(text).map(([n, t]) => ({ n, tags: new Set(t) }));
+    const used = new Set();   // varianty spomenuté v texte
+    const near = (from, step, max, g) => {
+      for (let j = from, c = 0; j >= 0 && j < ws.length && c < max; j += step, c++) if (ws[j].tags.has(g)) return j;
+      return -1;
+    };
+    for (let i = 0; i < ws.length; i++) {
+      for (const m of MODS) {
+        let j = -1;
+        if (m.re.test(ws[i].n)) {
+          used.add(m);
+          j = near(i + 1, 1, 3, m.group);
+          if (j < 0) j = near(i - 1, -1, 2, m.group);   // „chlieb kváskový“
+        } else if (ws[i].n === 'bez' && i + 1 < ws.length && m.bez.test(ws[i + 1].n)) {
+          used.add(m);
+          ws[i + 1].tags.delete(m.group);   // samotné „droždia“ v „bez droždia“ sa neráta
+          j = near(i - 1, -1, 4, m.group);
+        }
+        if (j >= 0) { ws[j].tags.delete(m.group); if (m.add) ws[j].tags.add(m.add); }
+      }
+    }
+    if (home) {
+      for (const k of HOME) {
+        const r = HOME_RULES[k];
+        for (const w of ws) {
+          if (!w.tags.has(r.group)) continue;
+          if (r.only && !r.only.some(x => w.n.startsWith(x))) continue;
+          if (r.except && r.except.some(x => w.n.startsWith(x))) continue;
+          w.tags.delete(r.group);
+          if (r.add) w.tags.add(r.add);
         }
       }
     }
-    const out = [...found];
-    if (TAG_MEMO.size > 5000) TAG_MEMO.clear();
-    TAG_MEMO.set(key, out);
-    return out.slice();
+    const tags = new Set();
+    ws.forEach(w => w.tags.forEach(t => tags.add(t)));
+    return { tags, used };
   }
 
-  /** Skupiny jedla = ručne označené + rozpoznané z popisu – ručne vypnuté */
+  function detectTags(desc) { return [...scan(desc, false).tags]; }
+
+  /** Skupiny jedla = ručne označené + rozpoznané z popisu a z Mojich jedál – ručne vypnuté.
+      Čo je napísané v zázname, má prednosť pred receptom („segedín s bezlaktózovou smotanou“). */
   function mealTags(e) {
-    const s = new Set((e.tags || []).concat(detectTags(expand(e.desc))));
+    const home = HOME.length > 0 && (!e.place || e.place === 'doma');
+    const own = scan(e.desc, home);
+    const s = new Set(own.tags);
+    const rec = recipeOf(e.desc);
+    if (rec.length) {
+      for (const t of scan(rec.map(x => x.ing).join(', '), home).tags) {
+        const m = MODS.find(x => x.group === t && own.used.has(x));
+        if (!m) s.add(t);
+        else if (m.add) s.add(m.add);
+      }
+    }
+    (e.tags || []).forEach(t => s.add(t));
     (e.noTags || []).forEach(t => s.delete(t));
     // zmazaná vlastná skupina sa už neráta
     return [...s].filter(t => !t.startsWith('c_') || TAG_WORDS[t]);
@@ -725,7 +799,7 @@
     return out.sort((a, b) => b.uses - a.uses);
   }
 
-  const api = { fisherP, analyze, bestWorst, evidence, medEffects, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
+  const api = { fisherP, analyze, bestWorst, evidence, medEffects, matcher, cyclePhases, setRecipes, recipeOf, expand, setCustomTags, setHome, wordsFor, tokenize, stem, norm, localDate, detectTags, mealTags, BASE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Analysis = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -200,7 +200,7 @@
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
     const settings = {};
-    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history', 'home'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
     const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
@@ -256,7 +256,7 @@
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
     if (data.settings && typeof data.settings === 'object') {
-      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history']) {
+      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history', 'home']) {
         if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
       }
     }
@@ -294,6 +294,8 @@
         ${srow('intol-edit', 'warn', 'sym', 'Moje intolerancie', esc(risk.join(', ')) || 'Zatiaľ nič vybrané', risk.length || '')}
         ${srow('favs', 'star', 'sun', 'Obľúbené jedlá', '', favorites().length || '')}
         ${srow('recipes', 'doc', 'food', 'Moje jedlá', 'Jedlá rozpísané na suroviny', recipes().length || '')}
+        ${srow('home', 'check', 'med', 'Doma používam', homeTxt())}
+        ${srow('ai', 'star', 'accent', 'Rozpis jedál cez AI', meta.aiErr ? 'Treba skontrolovať kľúč' : aiOn() ? 'Zapnuté' : 'Vypnuté')}
         ${srow('rec-open', 'bell', 'med', 'Pravidelné záznamy', 'Napr. ranná káva, lieky', recurring().length || '')}
       </div>
       <h2 class="sub">Záloha</h2><div class="dayrows">
@@ -334,7 +336,7 @@
         `<input type="text" id="rc-name" placeholder="Názov, napr. mamine halušky" enterkeyhint="next">
          <input type="text" id="rc-ing" style="margin-top:8px" placeholder="Suroviny, napr. halušky, bryndza, slanina" enterkeyhint="done">
          <button type="button" class="btn block" style="margin-top:10px" data-act="rc-add">Pridať jedlo</button>`) +
-        (list.length ? grp('Uložené', '<div class="fav-list">' + list.map((r, i) => `<div class="fav-row"><span>${esc(r.name)}<br><span class="tiny">${esc(r.ingredients)}</span></span>
+        (list.length ? grp('Uložené', '<div class="fav-list">' + list.map((r, i) => `<div class="fav-row"><span>${esc(r.name)}<br><span class="tiny">${esc(r.ingredients)}${r.ai ? ' · rozpísala AI' : ''}</span></span>
           <button type="button" class="btn ghost small" data-act="rc-del" data-i="${i}" aria-label="Zmazať">✕</button></div>`).join('') + '</div>') : '');
     } else if (kind === 'rec') {
       const list = recurring();
@@ -383,3 +385,24 @@
     if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
   }
 
+  // „Doma používam“: výrobky, ktoré doma kupuješ v inej verzii (bezlaktózové, bezlepkové, kváskový chlieb).
+  // Platí pre jedlá z domu a záznamy bez určenia, odkiaľ sú. Ostáva v telefóne, do AI sa neposiela.
+  const HOME_OPTS = [['bezlakt', 'Mliečne výrobky bezlaktózové', 'mlieko, smotana, jogurt, syr…'],
+    ['bezlepk', 'Pečivo, cestoviny a múka bezlepkové', 'okrem piva'], ['kvask', 'Chlieb kváskový bez droždia', 'rožky a ostatné pečivo sa rátajú ako s droždím']];
+  const homeTxt = () => HOME_OPTS.filter(([k]) => (meta.home || []).includes(k)).map(x => ({ bezlakt: 'bezlaktózové mliečne', bezlepk: 'bezlepkové', kvask: 'kváskový chlieb' })[x[0]]).join(', ') || 'Bežné výrobky';
+  function openHome() {
+    const on = meta.home || [];
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Doma používam</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
+      grp('', '<p class="small muted" style="margin:0">Ak niektoré výrobky kupuješ v inej verzii, zapni ich. Platí to pre jedlá uvarené doma a pre záznamy, pri ktorých nie je určené, odkiaľ sú. Pri reštaurácii, návšteve a kúpenom hotovom jedle sa ráta bežná verzia.</p>') +
+      grp('', HOME_OPTS.map(([k, l, d]) => sw('home-' + k, `${l}<br><span class="tiny">${d}</span>`, on.includes(k))).join('')) +
+      '<p class="tiny" style="margin:0 4px 12px">Jednotlivo stačí napísať do záznamu, napr. „bezlaktózové mlieko“, „bezlepkový chlieb“ alebo „chlieb bez droždia“. Toto nastavenie ostáva v telefóne a do AI sa neposiela.</p>' +
+      `<div class="savebar"><button type="button" class="btn primary" data-act="home-save">Uložiť</button></div>`;
+    if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
+  }
+  async function saveHome() {
+    await setMeta('home', HOME_OPTS.map(x => x[0]).filter(k => { const el = $('#home-' + k); return el && el.checked; }));
+    Analysis.setHome(meta.home);
+    closeSheet('mini-sheet');
+    toast('Uložené ✓');
+    render();
+  }

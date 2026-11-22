@@ -178,6 +178,7 @@
         draft[f] = draft[f] === v ? (f === 'duration' ? '' : null) : v;
       }
       refreshGroup(group, draft[f]);
+      if (f === 'place' && (meta.home || []).length) refreshFoodExtras();   // doma/von mení rozpoznané skupiny
       if (f === 'severity' && draft.severity >= 7) buzz(8);
       if (f === 'duration') $('#f-duration').value = draft.duration;
       if (f === 'severity') $('#sev-word').textContent = sevWord(draft.severity);
@@ -360,6 +361,22 @@
       case 'favs': openInfo('favs'); break;
       case 'rec-open': openInfo('rec'); break;
       case 'recipes': openInfo('recipes'); break;
+      case 'ai': openAi(); break;
+      case 'home': openHome(); break;
+      case 'home-save': await saveHome(); break;
+      case 'ai-save': await aiSave(act); break;
+      case 'ai-del':
+        await setMeta('aiKey', '');
+        await setMeta('aiErr', '');
+        openAi('Kľúč je zmazaný.');
+        break;
+      case 'ai-run': {
+        act.disabled = true;
+        act.textContent = 'Rozpisujem…';
+        const { added, error } = await aiRun(aiPending(), { quiet: false });
+        openAi(error ? esc(error.message) : 'Hotovo. Pridaných jedál: <b>' + added.length + '</b>.');
+        break;
+      }
       case 'rc-add': {
         const name = $('#rc-name').value.trim(), ing = $('#rc-ing').value.trim();
         if (name.length < 3 || !ing) { toast('Napíš názov aj suroviny'); break; }

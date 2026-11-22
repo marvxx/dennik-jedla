@@ -219,3 +219,29 @@ test('káva s mliekom: keď vadí mlieko, samotná káva sa vysvetlí mliekom', 
   const coffee = all.filter(x => x.key === 'tag:kava' || x.label === 'káva');
   assert.ok(coffee.every(x => x.level === 'none'), 'samotná káva by nemala byť podozrivá');
 });
+
+test('varianty: bezlaktózové, bezlepkové a kváskové sa nerátajú ako bežné', () => {
+  const t = (desc, place) => A.mealTags({ desc, place, tags: [], noTags: [] });
+  assert.deepEqual(t('bezlaktózové mlieko'), ['bezlakt']);
+  assert.deepEqual(t('mlieko bez laktózy'), ['bezlakt']);
+  assert.ok(!t('bezlepkový chlieb').includes('lepok'));
+  assert.ok(t('kváskový chlieb').includes('lepok') && !t('kváskový chlieb').includes('kvasnice'));
+  assert.ok(!t('chlieb bez droždia').includes('kvasnice'));
+  assert.ok(t('rožok').includes('kvasnice') && !t('droždie').includes('lepok'));
+  // text záznamu má prednosť pred receptom z Mojich jedál
+  A.setRecipes([{ name: 'segedín', ingredients: 'bravčové mäso, kyslá kapusta, smotana, cibuľa' }]);
+  assert.ok(t('segedín').includes('mliecne'));
+  const s = t('segedín s bezlaktózovou smotanou');
+  assert.ok(!s.includes('mliecne') && s.includes('bezlakt') && s.includes('cesnak'), s.join(','));
+  // Doma používam: platí doma a bez určenia, nie v reštaurácii
+  A.setHome(['bezlakt', 'kvask']);
+  try {
+    assert.ok(!t('segedín').includes('mliecne'));
+    assert.ok(t('segedín', 'restauracia').includes('mliecne'));
+    assert.ok(!t('chlieb s maslom', 'doma').includes('kvasnice'));
+    assert.ok(t('rožok', 'doma').includes('kvasnice'));
+  } finally {
+    A.setHome([]);
+    A.setRecipes([]);
+  }
+});

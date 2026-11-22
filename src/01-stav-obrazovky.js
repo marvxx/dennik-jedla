@@ -21,7 +21,7 @@
   }
 
   // Skupiny jedla v rozpracovanom zázname: ručne + automaticky rozpoznané – ručne vypnuté
-  function autoTags() { return Analysis.detectTags(Analysis.expand(draft.desc)); }
+  function autoTags() { return Analysis.mealTags({ desc: draft.desc, place: draft.place }); }
   function effectiveTags() {
     const s = new Set(draft.tags.concat(autoTags()));
     draft.noTags.forEach(t => s.delete(t));
@@ -45,6 +45,7 @@
     m.forEach(x => { meta[x.key] = x.value; });
     syncCustomTags();
     Analysis.setRecipes(recipes());
+    Analysis.setHome(meta.home);
   }
 
   // Vlastné intolerancie sa správajú ako ostatné skupiny: rozpoznanie z popisu, štítky, výpočty

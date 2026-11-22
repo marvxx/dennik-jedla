@@ -22,6 +22,7 @@
     switchView('today');
     if (!meta.onboarded && !entries.length && !location.search.includes('add=')) openWelcome();
     else openFromLink();
+    setTimeout(aiCatchUp, 3000);   // nerozpísané jedlá (napr. zapísané bez internetu)
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       // keď sa nainštaluje nová verzia, stránku raz obnovíme, aby sedeli všetky súbory
       const hadController = !!navigator.serviceWorker.controller;

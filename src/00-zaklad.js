@@ -1,5 +1,5 @@
 
-  const APP_VERSION = '4.1';
+  const APP_VERSION = '4.2';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -59,7 +59,7 @@
     ['cesnak', '', 'cibuľa / cesnak'], ['strukoviny', '', 'strukoviny'], ['histamin', '', 'histamín / zrejúce, údené'],
     ['kava', '', 'káva'], ['alkohol', '', 'alkohol'], ['sycene', '', 'sýtené nápoje'],
     ['sladidla', '', 'sladidlá / light'], ['pikantne', '', 'pikantné'], ['mastne', '', 'mastné / vyprážané'],
-    ['surova', '', 'surová zelenina'],
+    ['surova', '', 'surová zelenina'], ['kvasnice', '', 'kvasnice / droždie'], ['bezlakt', '', 'bezlaktózové mliečne'],
   ];
   // odkiaľ je jedlo (kto ho pripravil), nie kde sa jedlo
   const PLACES = [['doma', 'uvarené doma'], ['restauracia', 'reštaurácia, jedáleň'], ['niekto', 'u niekoho na návšteve'], ['kupovane', 'kúpené hotové (obchod, bufet)']];

@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '4.1';
+  const APP_VERSION = '4.2';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -63,7 +63,7 @@
     ['cesnak', '', 'cibuľa / cesnak'], ['strukoviny', '', 'strukoviny'], ['histamin', '', 'histamín / zrejúce, údené'],
     ['kava', '', 'káva'], ['alkohol', '', 'alkohol'], ['sycene', '', 'sýtené nápoje'],
     ['sladidla', '', 'sladidlá / light'], ['pikantne', '', 'pikantné'], ['mastne', '', 'mastné / vyprážané'],
-    ['surova', '', 'surová zelenina'],
+    ['surova', '', 'surová zelenina'], ['kvasnice', '', 'kvasnice / droždie'], ['bezlakt', '', 'bezlaktózové mliečne'],
   ];
   // odkiaľ je jedlo (kto ho pripravil), nie kde sa jedlo
   const PLACES = [['doma', 'uvarené doma'], ['restauracia', 'reštaurácia, jedáleň'], ['niekto', 'u niekoho na návšteve'], ['kupovane', 'kúpené hotové (obchod, bufet)']];
@@ -337,7 +337,7 @@
   }
 
   // Skupiny jedla v rozpracovanom zázname: ručne + automaticky rozpoznané – ručne vypnuté
-  function autoTags() { return Analysis.detectTags(Analysis.expand(draft.desc)); }
+  function autoTags() { return Analysis.mealTags({ desc: draft.desc, place: draft.place }); }
   function effectiveTags() {
     const s = new Set(draft.tags.concat(autoTags()));
     draft.noTags.forEach(t => s.delete(t));
@@ -361,6 +361,7 @@
     m.forEach(x => { meta[x.key] = x.value; });
     syncCustomTags();
     Analysis.setRecipes(recipes());
+    Analysis.setHome(meta.home);
   }
 
   // Vlastné intolerancie sa správajú ako ostatné skupiny: rozpoznanie z popisu, štítky, výpočty
@@ -1111,7 +1112,7 @@
 
   // 4) Jedlo zapísané len názvom (napr. „segedín“) sa oplatí rozpísať na suroviny
   function recipeAsk(e) {
-    if (e.type !== 'food' || isCoffee(e)) return null;
+    if (e.type !== 'food' || isCoffee(e) || aiOn()) return null;   // s AI sa rozpíše samo
     const desc = e.desc.trim(), k = desc.toLowerCase();
     if (/[,+]|\s(s|so|a|aj|na|z|zo|v|vo)\s/i.test(' ' + desc + ' ')) return null;   // už je rozpísané
     if (Analysis.recipeOf(desc).length || (meta.rcAsked || []).includes(k)) return null;
@@ -1155,6 +1156,229 @@
     todayExpanded = false;
     goDay(next);
   }, { passive: true });
+
+  // ---------- Rozpis jedla na suroviny cez AI (Claude) ----------
+  // Do AI ide IBA text jedla (napr. „segedín s knedľou“). Žiadne ťažkosti, stolica, lieky ani dátumy.
+  // Výsledok sa uloží do „Moje jedlá“, takže každé jedlo ide do AI len raz a potom to funguje aj bez internetu.
+  // Apka nemá server, preto sa volá priamo z telefónu s vlastným API kľúčom (uložený len v tomto telefóne, nie v zálohe).
+  const AI_MODEL = 'claude-opus-5-5';
+  const AI_BATCH = 40;          // jedál v jednej požiadavke
+  const AI_MAX_RUN = 160;       // najviac jedál naraz (pri zapnutí sa rozpíše aj história)
+  const aiOn = () => !!(meta.aiOn && meta.aiKey);
+  const aiSeen = () => meta.aiSeen || [];
+  const aiKeyOf = d => String(d || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const AI_SYSTEM = `Rozpisuješ jedlá zo slovenského denníka jedla a trávenia na suroviny. Denník hľadá potravinové intolerancie (mliečne, lepok, cibuľa a cesnak, strukoviny, fruktóza, histamín a pod.), preto sú dôležité aj skryté suroviny: smotana, maslo, mlieko, syr, múka, strúhanka, droždie, vajce, cibuľa, cesnak, med, ocot.
+Pre každé zložené jedlo v texte vráť:
+- name: názov jedla presne tak, ako je napísaný v texte (malými písmenami, rovnaké tvary slov, súvislá časť textu),
+- ingredients: 3 až 10 typických surovín bežného slovenského receptu, v základnom tvare po slovensky (napr. „bravčové mäso“, „kyslá kapusta“, „smotana“, „cibuľa“, „hladká múka“).
+Jeden riadok môže obsahovať viac jedál (napr. „segedín s knedľou“ → „segedín“ a „knedľa“). Vynechaj nápoje a veci, ktoré sú samé osebe jednou surovinou (jablko, rožok, jogurt). Ak jedlo nepoznáš, vynechaj ho. Ak je pri surovine v texte uvedený variant (bezlaktózová smotana, bezlepková múka, kváskový chlieb), zachovaj ho. Nič nevymýšľaj navyše.`;
+
+  const AI_SCHEMA = {
+    type: 'object',
+    properties: {
+      dishes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { name: { type: 'string' }, ingredients: { type: 'array', items: { type: 'string' } } },
+          required: ['name', 'ingredients'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['dishes'],
+    additionalProperties: false,
+  };
+
+  class AiError extends Error {
+    constructor(msg, kind) { super(msg); this.kind = kind; }
+  }
+
+  // Jedno volanie API: zoznam textov jedál → [{name, ingredients[]}]
+  async function aiAsk(lines, key) {
+    let res;
+    try {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2026-10-21',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'anthropic-beta': 'server-side-fallback-2026-07-01',
+        },
+        body: JSON.stringify({
+          model: AI_MODEL,
+          max_tokens: 8000,
+          output_config: { effort: 'low', format: { type: 'json_schema', schema: AI_SCHEMA } },
+          fallbacks: 'default',
+          system: AI_SYSTEM,
+          messages: [{ role: 'user', content: 'Jedlá (jedno na riadok):\n' + lines.join('\n') }],
+        }),
+      });
+    } catch (ex) {
+      throw new AiError('Nedá sa spojiť s AI. Skontroluj internet.', 'net');
+    }
+    let data = null;
+    try { data = await res.json(); } catch (ex) { /* prázdna odpoveď */ }
+    if (!res.ok) {
+      const msg = (data && data.error && data.error.message) || '';
+      if (res.status === 401 || res.status === 403) throw new AiError('API kľúč nefunguje. Skontroluj, či je celý a platný.', 'key');
+      if (/credit|balance|billing/i.test(msg)) throw new AiError('Na účte Anthropic nie je kredit. Dobi ho v platform.claude.com, časť Billing.', 'key');
+      if (res.status === 429 || res.status >= 500) throw new AiError('AI je teraz zaneprázdnená. Skúsi sa to neskôr.', 'busy');
+      throw new AiError('AI odmietla požiadavku (' + res.status + (msg ? ': ' + msg : '') + ').', 'other');
+    }
+    if (!data || data.stop_reason === 'refusal') return [];
+    const txt = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    try {
+      const out = JSON.parse(txt);
+      return Array.isArray(out.dishes) ? out.dishes : [];
+    } catch (ex) {
+      return [];
+    }
+  }
+
+  // Ktoré jedlo má zmysel poslať: nie je rozpísané v Moje jedlá, ešte nebolo v AI, nie je to jedna jasná surovina
+  function aiCandidate(desc) {
+    const d = String(desc || '').trim();
+    if (d.length < 3) return false;
+    if (aiSeen().includes(aiKeyOf(d))) return false;
+    if (Analysis.recipeOf(d).length) return false;
+    const words = d.split(/\s+/).filter(Boolean);
+    if (words.length < 2 && Analysis.detectTags(d).length) return false;   // napr. „banán“, „jogurt“
+    return true;
+  }
+
+  // Uloží len jedlá, ktoré niečo prezradia: suroviny majú skupinu, ktorú samotný názov nemá
+  function aiUseful(name, ingredients) {
+    const own = new Set(Analysis.detectTags(name));
+    return Analysis.detectTags(ingredients.join(', ')).some(t => !own.has(t));
+  }
+
+  let aiBusy = false;
+  async function aiRun(descs, opt) {
+    opt = opt || {};
+    if (!aiOn() || aiBusy || !descs.length) return { added: [], error: null };
+    if (navigator.onLine === false) return { added: [], error: null };
+    aiBusy = true;
+    const added = [];
+    let error = null;
+    try {
+      for (let i = 0; i < descs.length; i += AI_BATCH) {
+        const batch = descs.slice(i, i + AI_BATCH);
+        let dishes;
+        try {
+          dishes = await aiAsk(batch, meta.aiKey);
+        } catch (ex) {
+          error = ex;
+          break;
+        }
+        const texts = batch.map(d => Analysis.norm(d.toLowerCase()));
+        const list = recipes().slice();
+        for (const x of dishes) {
+          const name = String(x.name || '').trim().toLowerCase();
+          const ing = (x.ingredients || []).map(s => String(s).trim().toLowerCase()).filter(Boolean).slice(0, 12);
+          if (name.length < 3 || !ing.length) continue;
+          const n = Analysis.norm(name);
+          if (!texts.some(t => t.includes(n))) continue;   // názov musí byť naozaj v texte, inak by sa nikdy nespároval
+          if (list.some(r => Analysis.norm(r.name.toLowerCase()) === n)) continue;
+          if (!aiUseful(name, ing)) continue;
+          const r = { name, ingredients: ing.join(', '), ai: true };
+          list.push(r);
+          added.push(r);
+        }
+        await setMeta('recipes', list);
+        await setMeta('aiSeen', aiSeen().concat(batch.map(aiKeyOf)).slice(-3000));
+        Analysis.setRecipes(recipes());
+      }
+    } finally {
+      aiBusy = false;
+    }
+    if (error && error.kind === 'key') await setMeta('aiErr', error.message);
+    else if (!error) await setMeta('aiErr', '');
+    if (added.length && !opt.quiet) render();
+    return { added, error };
+  }
+
+  // Nerozpísané jedlá z denníka, najčastejšie ako prvé
+  function aiPending(limit) {
+    const cnt = new Map();
+    for (const e of entries) {
+      if (e.type !== 'food' || isCoffee(e)) continue;
+      const d = String(e.desc || '').trim();
+      const k = aiKeyOf(d);
+      if (!cnt.has(k)) { if (!aiCandidate(d)) continue; cnt.set(k, { d, n: 0 }); }
+      cnt.get(k).n++;
+    }
+    return [...cnt.values()].sort((a, b) => b.n - a.n).slice(0, limit || AI_MAX_RUN).map(x => x.d);
+  }
+
+  // Po uložení jedla: rozpíše ho na pozadí a povie, čo našla
+  async function aiAfterSave(e) {
+    if (!aiOn() || e.type !== 'food' || isCoffee(e) || !aiCandidate(e.desc)) return;
+    const { added, error } = await aiRun([e.desc.trim()]);
+    if (added.length) {
+      toast(added.map(r => cap(r.name) + ': ' + r.ingredients).join(' · '), { label: 'Upraviť', run: () => openInfo('recipes') });
+    } else if (error && error.kind === 'key') {
+      toast(error.message, { label: 'Nastaviť', run: () => openAi() });
+    }
+  }
+
+  // Pri spustení apky doplní jedlá, ktoré sa nerozpísali (napr. bez internetu)
+  function aiCatchUp() {
+    if (!aiOn() || meta.aiErr) return;
+    const list = aiPending();
+    if (list.length) aiRun(list, { quiet: false }).catch(() => {});
+  }
+
+  const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
+
+  function openAi(note) {
+    const nAi = recipes().filter(r => r.ai).length;
+    const pending = meta.aiKey ? aiPending().length : 0;
+    const has = !!meta.aiKey;
+    const body = grp('', `<p class="small muted" style="margin:0">AI (Claude od firmy Anthropic) rozpíše jedlo na suroviny, aj tie skryté. Napríklad „segedín“ na bravčové mäso, kyslú kapustu, smotanu a cibuľu. Vyhodnotenie potom vidí aj mlieko či cibuľu v hotových jedlách.</p>`) +
+      grp('Čo sa posiela', `<p class="small muted" style="margin:0"><b>Iba text jedla</b>, napríklad „segedín s knedľou“. Nikdy nie ťažkosti, stolica, lieky ani dátumy. Každé jedlo sa pošle len raz, potom sa pamätá v „Moje jedlá“ a dá sa tam upraviť alebo zmazať.</p>`) +
+      grp('API kľúč', `<input type="password" id="ai-key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${has ? 'Kľúč je uložený (••••' + esc(meta.aiKey.slice(-4)) + ')' : 'sk-ant-…'}">
+        <p class="tiny" style="margin:8px 0 0">Kľúč ostáva len v tomto telefóne a nie je v zálohe.</p>
+        ${sw('ai-on', 'Rozpisovať jedlá automaticky', meta.aiOn !== false)}
+        <button type="button" class="btn block" style="margin-top:10px" data-act="ai-save">Uložiť a vyskúšať</button>
+        ${has ? `<button type="button" class="btn ghost block" style="margin-top:8px" data-act="ai-del">Zmazať kľúč</button>` : ''}
+        ${note ? `<p class="small" style="margin:10px 0 0">${note}</p>` : ''}
+        ${meta.aiErr ? `<p class="small" style="margin:10px 0 0;color:var(--danger)">${esc(meta.aiErr)}</p>` : ''}`) +
+      (has ? grp('Stav', `<p class="small muted" style="margin:0">Rozpísaných jedál cez AI: <b>${nAi}</b>${pending ? `<br>Čaká na rozpísanie: <b>${pending}</b>` : ''}</p>
+        ${pending && aiOn() ? `<button type="button" class="btn block" style="margin-top:10px" data-act="ai-run">Rozpísať teraz</button>` : ''}`) : '') +
+      grp('Ako získať kľúč', `<ol class="steps small"><li>Otvor <b>platform.claude.com</b> a prihlás sa (môže to byť rovnaký e-mail ako do Claude).</li>
+        <li>V časti <b>Billing</b> si dobi kredit, stačí najmenšia suma. Predplatné Claude Pro ho neobsahuje, Max áno.</li>
+        <li>V časti <b>API keys</b> ťukni na <b>Create key</b> a kľúč skopíruj.</li><li>Vlož ho sem a ťukni na Uložiť a vyskúšať.</li></ol>
+        <p class="tiny" style="margin:8px 0 0">Jedno jedlo stojí zhruba pol centa. Pri bežnom používaní to vychádza na jednotky eur ročne. Firma Anthropic údaje z API nepoužíva na trénovanie.</p>`);
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Rozpis jedál cez AI</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>${body}
+      <div class="savebar"><button type="button" class="btn primary" data-act="mini-close">Hotovo</button></div>`;
+    if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
+  }
+
+  async function aiSave(btn) {
+    const k = ($('#ai-key').value || '').trim();
+    const on = $('#ai-on').checked;
+    if (k) {
+      if (!/^sk-ant-/.test(k)) { toast('Kľúč začína na sk-ant-'); return; }
+      await setMeta('aiKey', k);
+    }
+    await setMeta('aiOn', on);
+    if (!meta.aiKey) { toast('Vlož API kľúč'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Skúšam…'; }
+    try {
+      const dishes = await aiAsk(['segedín s knedľou'], meta.aiKey);
+      await setMeta('aiErr', '');
+      const s = dishes.find(d => /seged/.test(d.name)) || dishes[0];
+      openAi(s ? '✓ Funguje. Skúška: <b>' + esc(cap(s.name)) + '</b> = ' + esc(s.ingredients.join(', ')) : '✓ Spojenie funguje.');
+      if (on) aiCatchUp();
+    } catch (ex) {
+      await setMeta('aiErr', ex.message);
+      openAi();
+    }
+  }
   // ---------- Skenovanie balených výrobkov ----------
   const products = () => meta.products || {};
 
@@ -1560,7 +1784,7 @@
     render();
     const fresh = $('.entry.flash');
     if (fresh) fresh.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    if (!wasEditing) offerRecipe(e);
+    if (!wasEditing) { offerRecipe(e); aiAfterSave(e); }
   }
 
   function openEntry() {
@@ -2902,7 +3126,7 @@
   async function doBackup() {
     if (!entries.length && !Object.keys(days).length) { toast('Zatiaľ nie je čo zálohovať'); return; }
     const settings = {};
-    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
+    ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history', 'home'].forEach(k => { if (meta[k] !== undefined) settings[k] = meta[k]; });
     const data = { app: 'dennik-jedla', version: 2, exported: new Date().toISOString(), entries, days: Object.values(days), settings };
     const ok = await saveFile('dennik-zaloha-' + todayStr() + '.json', 'application/json', JSON.stringify(data, null, 1));
     if (ok) {
@@ -2958,7 +3182,7 @@
     await DB.putMany('entries', valid);
     if (dayList.length) await DB.putMany('days', dayList);
     if (data.settings && typeof data.settings === 'object') {
-      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history']) {
+      for (const k of ['products', 'customTags', 'intol', 'favorites', 'fromH', 'toH', 'minN', 'findings', 'test', 'recipes', 'recurring', 'reintro', 'history', 'home']) {
         if (data.settings[k] !== undefined && meta[k] === undefined) await setMeta(k, data.settings[k]);
       }
     }
@@ -2996,6 +3220,8 @@
         ${srow('intol-edit', 'warn', 'sym', 'Moje intolerancie', esc(risk.join(', ')) || 'Zatiaľ nič vybrané', risk.length || '')}
         ${srow('favs', 'star', 'sun', 'Obľúbené jedlá', '', favorites().length || '')}
         ${srow('recipes', 'doc', 'food', 'Moje jedlá', 'Jedlá rozpísané na suroviny', recipes().length || '')}
+        ${srow('home', 'check', 'med', 'Doma používam', homeTxt())}
+        ${srow('ai', 'star', 'accent', 'Rozpis jedál cez AI', meta.aiErr ? 'Treba skontrolovať kľúč' : aiOn() ? 'Zapnuté' : 'Vypnuté')}
         ${srow('rec-open', 'bell', 'med', 'Pravidelné záznamy', 'Napr. ranná káva, lieky', recurring().length || '')}
       </div>
       <h2 class="sub">Záloha</h2><div class="dayrows">
@@ -3036,7 +3262,7 @@
         `<input type="text" id="rc-name" placeholder="Názov, napr. mamine halušky" enterkeyhint="next">
          <input type="text" id="rc-ing" style="margin-top:8px" placeholder="Suroviny, napr. halušky, bryndza, slanina" enterkeyhint="done">
          <button type="button" class="btn block" style="margin-top:10px" data-act="rc-add">Pridať jedlo</button>`) +
-        (list.length ? grp('Uložené', '<div class="fav-list">' + list.map((r, i) => `<div class="fav-row"><span>${esc(r.name)}<br><span class="tiny">${esc(r.ingredients)}</span></span>
+        (list.length ? grp('Uložené', '<div class="fav-list">' + list.map((r, i) => `<div class="fav-row"><span>${esc(r.name)}<br><span class="tiny">${esc(r.ingredients)}${r.ai ? ' · rozpísala AI' : ''}</span></span>
           <button type="button" class="btn ghost small" data-act="rc-del" data-i="${i}" aria-label="Zmazať">✕</button></div>`).join('') + '</div>') : '');
     } else if (kind === 'rec') {
       const list = recurring();
@@ -3085,6 +3311,27 @@
     if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
   }
 
+  // „Doma používam“: výrobky, ktoré doma kupuješ v inej verzii (bezlaktózové, bezlepkové, kváskový chlieb).
+  // Platí pre jedlá z domu a záznamy bez určenia, odkiaľ sú. Ostáva v telefóne, do AI sa neposiela.
+  const HOME_OPTS = [['bezlakt', 'Mliečne výrobky bezlaktózové', 'mlieko, smotana, jogurt, syr…'],
+    ['bezlepk', 'Pečivo, cestoviny a múka bezlepkové', 'okrem piva'], ['kvask', 'Chlieb kváskový bez droždia', 'rožky a ostatné pečivo sa rátajú ako s droždím']];
+  const homeTxt = () => HOME_OPTS.filter(([k]) => (meta.home || []).includes(k)).map(x => ({ bezlakt: 'bezlaktózové mliečne', bezlepk: 'bezlepkové', kvask: 'kváskový chlieb' })[x[0]]).join(', ') || 'Bežné výrobky';
+  function openHome() {
+    const on = meta.home || [];
+    $('#mini-sheet').innerHTML = `<div class="sheet-head"><h2>Doma používam</h2><button type="button" class="x" data-act="mini-close" aria-label="Zavrieť">✕</button></div>` +
+      grp('', '<p class="small muted" style="margin:0">Ak niektoré výrobky kupuješ v inej verzii, zapni ich. Platí to pre jedlá uvarené doma a pre záznamy, pri ktorých nie je určené, odkiaľ sú. Pri reštaurácii, návšteve a kúpenom hotovom jedle sa ráta bežná verzia.</p>') +
+      grp('', HOME_OPTS.map(([k, l, d]) => sw('home-' + k, `${l}<br><span class="tiny">${d}</span>`, on.includes(k))).join('')) +
+      '<p class="tiny" style="margin:0 4px 12px">Jednotlivo stačí napísať do záznamu, napr. „bezlaktózové mlieko“, „bezlepkový chlieb“ alebo „chlieb bez droždia“. Toto nastavenie ostáva v telefóne a do AI sa neposiela.</p>' +
+      `<div class="savebar"><button type="button" class="btn primary" data-act="home-save">Uložiť</button></div>`;
+    if (!openSheets.includes('mini-sheet')) openSheet('mini-sheet');
+  }
+  async function saveHome() {
+    await setMeta('home', HOME_OPTS.map(x => x[0]).filter(k => { const el = $('#home-' + k); return el && el.checked; }));
+    Analysis.setHome(meta.home);
+    closeSheet('mini-sheet');
+    toast('Uložené ✓');
+    render();
+  }
   // ---------- Úvod pri prvom spustení ----------
   // Tri krátke obrazovky. Ukáže sa raz, potom už len z Pomocníka („Úvod znova“).
   let welcomeStep = 0;
@@ -3443,6 +3690,7 @@
         draft[f] = draft[f] === v ? (f === 'duration' ? '' : null) : v;
       }
       refreshGroup(group, draft[f]);
+      if (f === 'place' && (meta.home || []).length) refreshFoodExtras();   // doma/von mení rozpoznané skupiny
       if (f === 'severity' && draft.severity >= 7) buzz(8);
       if (f === 'duration') $('#f-duration').value = draft.duration;
       if (f === 'severity') $('#sev-word').textContent = sevWord(draft.severity);
@@ -3625,6 +3873,22 @@
       case 'favs': openInfo('favs'); break;
       case 'rec-open': openInfo('rec'); break;
       case 'recipes': openInfo('recipes'); break;
+      case 'ai': openAi(); break;
+      case 'home': openHome(); break;
+      case 'home-save': await saveHome(); break;
+      case 'ai-save': await aiSave(act); break;
+      case 'ai-del':
+        await setMeta('aiKey', '');
+        await setMeta('aiErr', '');
+        openAi('Kľúč je zmazaný.');
+        break;
+      case 'ai-run': {
+        act.disabled = true;
+        act.textContent = 'Rozpisujem…';
+        const { added, error } = await aiRun(aiPending(), { quiet: false });
+        openAi(error ? esc(error.message) : 'Hotovo. Pridaných jedál: <b>' + added.length + '</b>.');
+        break;
+      }
       case 'rc-add': {
         const name = $('#rc-name').value.trim(), ing = $('#rc-ing').value.trim();
         if (name.length < 3 || !ing) { toast('Napíš názov aj suroviny'); break; }
@@ -3925,6 +4189,7 @@
     switchView('today');
     if (!meta.onboarded && !entries.length && !location.search.includes('add=')) openWelcome();
     else openFromLink();
+    setTimeout(aiCatchUp, 3000);   // nerozpísané jedlá (napr. zapísané bez internetu)
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       // keď sa nainštaluje nová verzia, stránku raz obnovíme, aby sedeli všetky súbory
       const hadController = !!navigator.serviceWorker.controller;
