@@ -1,5 +1,5 @@
 
-  const APP_VERSION = '4.0.3';
+  const APP_VERSION = '4.0.4';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -66,6 +66,8 @@
   // krátke názvy na tlačidlá vo formulári (v prehľadoch ostávajú dlhšie)
   const PLACES_SHORT = [['doma', 'doma'], ['restauracia', 'reštaurácia'], ['niekto', 'na návšteve'], ['kupovane', 'kúpené hotové']];
   const KINDS = ['kŕč', 'nadúvanie', 'plynatosť', 'nevoľnosť', 'pálenie záhy', 'nutkanie na stolicu'];
+  // zobrazenie v dvoch riadkoch (dĺžky vyvážené, nič sa nezalamuje)
+  const KIND_ROWS = [['kŕč', 'nutkanie na stolicu', 'nevoľnosť'], ['nadúvanie', 'plynatosť', 'pálenie záhy']];
   const LOCATION = [['horna', 'hore'], ['pupok', 'okolo pupka'], ['dolna', 'dole'], ['lava', 'ľavá strana'], ['prava', 'pravá strana'], ['cele', 'celé brucho']];
   const DURATIONS = ['5 min', '15 min', '30 min', '1 h', '2 h', 'viac hodín'];
   const MOODS = [[1, '😣'], [2, '🙁'], [3, '😐'], [4, '🙂'], [5, '😄']];

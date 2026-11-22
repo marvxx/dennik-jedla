@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '4.0.3';
+  const APP_VERSION = '4.0.4';
 
   // Vzhľad: automaticky podľa telefónu, alebo ručne svetlý/tmavý (pamätá si ho tento prehliadač)
   const THEME_BG = { light: '#edf2f1', dark: '#0d1719' };
@@ -70,6 +70,8 @@
   // krátke názvy na tlačidlá vo formulári (v prehľadoch ostávajú dlhšie)
   const PLACES_SHORT = [['doma', 'doma'], ['restauracia', 'reštaurácia'], ['niekto', 'na návšteve'], ['kupovane', 'kúpené hotové']];
   const KINDS = ['kŕč', 'nadúvanie', 'plynatosť', 'nevoľnosť', 'pálenie záhy', 'nutkanie na stolicu'];
+  // zobrazenie v dvoch riadkoch (dĺžky vyvážené, nič sa nezalamuje)
+  const KIND_ROWS = [['kŕč', 'nutkanie na stolicu', 'nevoľnosť'], ['nadúvanie', 'plynatosť', 'pálenie záhy']];
   const LOCATION = [['horna', 'hore'], ['pupok', 'okolo pupka'], ['dolna', 'dole'], ['lava', 'ľavá strana'], ['prava', 'pravá strana'], ['cele', 'celé brucho']];
   const DURATIONS = ['5 min', '15 min', '30 min', '1 h', '2 h', 'viac hodín'];
   const MOODS = [[1, '😣'], [2, '🙁'], [3, '😐'], [4, '🙂'], [5, '😄']];
@@ -1050,11 +1052,10 @@
     if (!e || Date.now() - e.created > 15 * 60e3) { quickSymId = null; return ''; }
     const on = e.kinds || [];
     // dva riadky, dĺžky slov vyvážené tak, aby sa nič nezalamovalo; Hotovo v hlavičke
-    const rows = [['kŕč', 'nutkanie na stolicu', 'nevoľnosť'], ['nadúvanie', 'plynatosť', 'pálenie záhy']];
     const chip = k => `<button type="button" class="chip${on.includes(k) ? ' on' : ''}" data-act="qs-kind" data-v="${esc(k)}">${esc(k)}</button>`;
     return `<div class="qk"><div class="qk-top"><span class="qk-h">Aké? <span class="tiny">môžeš viac</span></span>` +
       `<button type="button" class="linkbtn qk-done" data-act="qs-done">Hotovo</button></div>` +
-      rows.map(r => `<div class="qk-row">${r.filter(k => KINDS.includes(k)).map(chip).join('')}</div>`).join('') +
+      KIND_ROWS.map(r => `<div class="qk-row">${r.filter(k => KINDS.includes(k)).map(chip).join('')}</div>`).join('') +
       `</div>`;
   }
   async function toggleQuickKind(k) {
@@ -1453,7 +1454,7 @@
         sw('f-rec', 'Opakovať každý deň o ' + fmtTime(draft.ts), draft.rec) +
         '<p class="tiny" style="margin:6px 0 0">Pravidelné sa na obrazovke Dnes ukáže na zápis jedným ťuknutím.</p></div></details>';
     } else if (t === 'symptom') {
-      h += grp('Aké ťažkosti?', chipGroup('kinds', KINDS, { multi: true }));
+      h += grp('Aké ťažkosti?', KIND_ROWS.map(r => chipGroup('kinds', r, { multi: true, cls: 'qk-row' })).join(''));
       h += grp('Aké silné?', chipGroup('severity', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]),
         { kind: 'num', cls: 'sevrow', chipCls: v => 'sev-' + v }) + `<div class="sev-word" id="sev-word">${sevWord(draft.severity)}</div>`);
       h += timeField();

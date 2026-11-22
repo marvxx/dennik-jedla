@@ -297,7 +297,7 @@
         sw('f-rec', 'Opakovať každý deň o ' + fmtTime(draft.ts), draft.rec) +
         '<p class="tiny" style="margin:6px 0 0">Pravidelné sa na obrazovke Dnes ukáže na zápis jedným ťuknutím.</p></div></details>';
     } else if (t === 'symptom') {
-      h += grp('Aké ťažkosti?', chipGroup('kinds', KINDS, { multi: true }));
+      h += grp('Aké ťažkosti?', KIND_ROWS.map(r => chipGroup('kinds', r, { multi: true, cls: 'qk-row' })).join(''));
       h += grp('Aké silné?', chipGroup('severity', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => [n, String(n)]),
         { kind: 'num', cls: 'sevrow', chipCls: v => 'sev-' + v }) + `<div class="sev-word" id="sev-word">${sevWord(draft.severity)}</div>`);
       h += timeField();
